@@ -1,0 +1,32 @@
+{
+  "_doc": "DOC-06 §7 inputs. null = not yet measured or pending the owner; model.py refuses to run while any value is null.",
+  "currency": "USD",
+  "eur_usd_planning_rate": null,
+  "rate_card": {
+    "code": "RC-2", "base": 25.00, "included_users": 2,
+    "bands": [[2, 10, 1.75], [10, 25, 0.50], [25, 50, 1.25], [50, null, 0.85]],
+    "staging_floor": 25.00, "staging_sensitivity": 15.00
+  },
+  "boundaries": [2, 3, 10, 11, 25, 26, 50, 51, 100],
+  "tenant_counts": [10, 20, 50, 100],
+  "measured": {
+    "app_host_monthly_eur": null,
+    "tenants_per_app_host": null,
+    "db_host_monthly_eur": null,
+    "tenants_per_db_host": null,
+    "archive_gb_by_users": null
+  },
+  "fixed_monthly_eur": {
+    "ctl_host": null, "mail_host": null, "deadman_service": null, "tang_offsite": null, "registry": null
+  },
+  "storage": {
+    "volume_eur_per_gb": null, "b2_usd_per_gb": null, "l1_copies_retained": 8, "l2_share_usd": null
+  },
+  "mail_usd_per_tenant": null,
+  "ops": {
+    "backup_operator_monthly_usd": null,
+    "support_hourly_usd": null,
+    "support_hours_by_users": [[10, 1], [25, 2], [50, 3], [null, 3]]
+  },
+  "target_margin": 0.40
+}

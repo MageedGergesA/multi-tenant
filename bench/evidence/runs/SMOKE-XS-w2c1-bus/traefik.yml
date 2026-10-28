@@ -1,0 +1,11 @@
+http:
+  routers:
+    odoo: {rule: "PathPrefix(`/`)", service: odoo, entryPoints: [web]}
+    websocket: {rule: "PathPrefix(`/websocket`)", service: bus, entryPoints: [web], priority: 100}
+  # Upstream keep-alive off: an idle pooled connection pins an Odoo prefork
+  # worker until its socket timeout (found in SMOKE-XS, 2026-10-24).
+  serversTransports:
+    no-keepalive: {maxIdleConnsPerHost: -1}
+  services:
+    odoo: {loadBalancer: {serversTransport: no-keepalive, servers: [{url: "http://bench-tenant-smoke-xs-w2c1-bus:8069"}]}}
+    bus: {loadBalancer: {servers: [{url: "http://bench-tenant-smoke-xs-w2c1-bus:8072"}]}}

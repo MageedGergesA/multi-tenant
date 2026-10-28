@@ -1,0 +1,37 @@
+# {{ ansible_managed }}: infra/ansible role app. Routers come from the agent (/etc/traefik/dynamic,
+# hostagent/backends.py traefik_write): websecure only, tenants on 127.0.0.1.
+global:
+  checkNewVersion: false
+  sendAnonymousUsage: false
+log:
+  level: INFO
+entryPoints:
+  web:
+    address: ":80"
+    http:
+      redirections:
+        entryPoint:
+          to: websecure
+          scheme: https
+  websecure:
+    address: ":443"
+    http:
+      tls: {}
+  ping:
+    address: "127.0.0.1:8082"
+ping:
+  entryPoint: ping
+providers:
+  file:
+    directory: /etc/traefik/dynamic
+    watch: true
+{% if app_cert_resolver %}
+certificatesResolvers:
+  {{ app_cert_resolver }}:
+    acme:
+      email: "{{ app_acme_email }}"
+      caServer: "{{ app_acme_ca_server }}"
+      storage: /data/acme.json
+      httpChallenge:
+        entryPoint: web
+{% endif %}

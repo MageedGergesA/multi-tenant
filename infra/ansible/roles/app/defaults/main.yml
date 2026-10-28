@@ -1,0 +1,23 @@
+---
+# An app host (ADR-011, DOC-05 §6): Docker with userns-remap for the tenants' Odoo containers,
+# Traefik on 80/443, the tenants' filestore on its Hetzner Volume. The agent (role agent, app)
+# drives all three.
+#
+# Required, no default:
+#   app_db_ca_file: db-1's certificate on the controller (the db play fetches it to
+#     .build/<db host>.crt); tenants connect with sslmode verify-full against it
+#   app_filestore_device: the Volume, /dev/disk/by-id/scsi-0HC_Volume_<id> (tofu output
+#     app_hosts.<name>.filestore_volume_id). Hetzner formats it ext4; this play never does.
+# Development only: no Volume, /srv/tenants on the root disk.
+app_filestore_on_root_disk: false
+
+# Tenant uid N runs as host uid app_subuid_base + N (tenant uids 10001–59999).
+app_subuid_base: 100000
+
+# v3.7.14, released 2026-10-06 (index digest: every architecture).
+app_traefik_image: "traefik:v3.7.14@sha256:575fa15b135078fe5e50aa847987d96dbddd7b093c172429618404df73f3fa7c"
+# Let's Encrypt (HTTP-01 on :80) for tenant hostnames, resolver "le" in the agent's routers.
+# '' = no resolver: Traefik serves its default self-signed certificate (development).
+app_cert_resolver: le
+app_acme_email: ""
+app_acme_ca_server: https://acme-v02.api.letsencrypt.org/directory

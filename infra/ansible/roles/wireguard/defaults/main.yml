@@ -1,0 +1,9 @@
+---
+wireguard_address: 10.8.0.1/24
+wireguard_port: 51820
+# [{name, public_key, address}]: operators and hosts (agents poll ctl over it, DOC-04 §1). A host's
+# own peer list is ctl-1: {name, public_key, address: 10.8.0.1, endpoint: <public ip>:51820,
+# keepalive: 25} (keepalive, as it opens the connection from behind no NAT but must keep it up).
+wireguard_peers: []
+# False only where no WireGuard kernel module exists (the test container).
+wireguard_start: true

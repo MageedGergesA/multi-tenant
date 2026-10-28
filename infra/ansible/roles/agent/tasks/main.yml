@@ -1,0 +1,224 @@
+---
+- name: Required variables
+  ansible.builtin.assert:
+    that: lookup('ansible.builtin.vars', item, default='') | string | length > 0
+    fail_msg: "{{ item }} is required (roles/agent/defaults/main.yml)"
+    quiet: true
+  loop: [agent_host_id, agent_role, agent_trust_root, agent_ctl_ca_file]
+
+- name: The role is app or db
+  ansible.builtin.assert:
+    that: agent_role in ['app', 'db']
+    quiet: true
+
+- name: An app host names db-1 and its image registry
+  ansible.builtin.assert:
+    that: >-
+      agent_role != 'app' or (agent_app_db_host | length > 0 and (agent_app_image_source != 'registry'
+      or (agent_registry_host | length > 0 and agent_app_repository | length > 0)))
+    fail_msg: an app host needs agent_app_db_host, agent_registry_host and agent_app_repository
+    quiet: true
+
+# agentd and the executor share this group for the socket (hostagent/execd.py ExecServer owner_gid).
+- name: The agent-exec group
+  ansible.builtin.group:
+    name: agent-exec
+    system: true
+
+- name: The agent user (agentd)
+  ansible.builtin.user:
+    name: agent
+    system: true
+    shell: /usr/sbin/nologin
+    home: /var/lib/agent
+    create_home: false
+    groups: [agent-exec]
+    append: true
+
+- name: The executor's user on db-1 is postgres
+  ansible.builtin.set_fact:
+    agent_exec_user: "{{ 'postgres' if agent_role == 'db' else 'root' }}"
+
+- name: Directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner }}"
+    group: "{{ item.group }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - {path: "{{ agent_prefix }}", owner: root, group: root, mode: "0755"}
+    # Both agentd (agent) and the executor (postgres on db-1) read here; no secret is (keys: /var/lib/agent).
+    - {path: /etc/agent, owner: root, group: agent-exec, mode: "0750"}
+    - {path: /var/lib/agent, owner: agent, group: agent, mode: "0700"}
+    - {path: /var/log/agent-exec, owner: "{{ agent_exec_user }}", group: root, mode: "0750"}
+
+# -- the package (as the ctl role does: reproducible bundle, installed-bundle marker) ---
+
+- name: Bundle the agent on the controller
+  ansible.builtin.command:  # noqa: command-instead-of-module (unarchive can't create; this is reproducible)
+    cmd: >-
+      tar --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner
+      --exclude=__pycache__ --exclude=*.pyc -C {{ agent_src }}
+      -cf {{ playbook_dir }}/.build/agent.tar hostagent pyproject.toml requirements.lock
+  delegate_to: localhost
+  become: false
+  run_once: true
+  changed_when: false
+
+- name: Copy the bundle
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/.build/agent.tar"
+    dest: "{{ agent_prefix }}/agent.tar"
+    owner: root
+    group: root
+    mode: "0644"
+  register: agent_bundle
+
+- name: Which bundle is installed?
+  ansible.builtin.slurp:
+    src: "{{ agent_prefix }}/installed-bundle"
+  register: agent_installed_bundle
+  failed_when: false
+
+- name: Unpack and install (a bundle not installed yet)
+  when: (agent_installed_bundle.content | default('') | b64decode | trim) != agent_bundle.checksum
+  block:
+    - name: Remove the previous source
+      ansible.builtin.file:
+        path: "{{ agent_prefix }}/src"
+        state: absent
+
+    - name: Source directory
+      ansible.builtin.file:
+        path: "{{ agent_prefix }}/src"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Unpack
+      ansible.builtin.unarchive:
+        src: "{{ agent_prefix }}/agent.tar"
+        dest: "{{ agent_prefix }}/src"
+        remote_src: true
+        owner: root
+        group: root
+
+    - name: Virtualenv
+      ansible.builtin.command:
+        cmd: python3 -m venv {{ agent_prefix }}/venv
+        creates: "{{ agent_prefix }}/venv/bin/python"
+
+    - name: Install the agent
+      ansible.builtin.command:
+        cmd: >-
+          {{ agent_prefix }}/venv/bin/pip install --no-cache-dir --disable-pip-version-check -q
+          -c {{ agent_prefix }}/src/requirements.lock {{ agent_prefix }}/src
+      changed_when: true
+      register: agent_installed
+
+    - name: Record the installed bundle
+      ansible.builtin.copy:
+        content: "{{ agent_bundle.checksum }}\n"
+        dest: "{{ agent_prefix }}/installed-bundle"
+        owner: root
+        group: root
+        mode: "0644"
+
+# -- configuration and units ------------------------------------------------------------
+
+- name: The agent-exec group's id (the executor gives it the socket)
+  ansible.builtin.getent:
+    database: group
+    key: agent-exec
+
+- name: The agent user's id (the app executor's archives are agentd's)
+  ansible.builtin.getent:
+    database: passwd
+    key: agent
+
+- name: Install ctl-1's CA (public)
+  ansible.builtin.copy:
+    src: "{{ agent_ctl_ca_file }}"
+    dest: /etc/agent/ctl-ca.pem
+    owner: root
+    group: agent-exec
+    mode: "0640"
+  register: agent_ca
+
+- name: Configuration
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/agent/{{ item }}"
+    owner: root
+    group: agent-exec
+    mode: "0640"
+  loop: [agent.toml, exec.toml]
+  register: agent_config
+
+- name: Units
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop: [agent-exec.service, agentd.service]
+  register: agent_units
+
+- name: Run the executor
+  ansible.builtin.systemd_service:
+    name: agent-exec
+    enabled: true
+    daemon_reload: true
+    state: "{{ 'restarted' if (agent_installed is changed or agent_config is changed or agent_units is changed) else 'started' }}"
+
+# -- enrollment (DOC-04 §2, §6.16) ------------------------------------------------------
+
+- name: Is this host enrolled?
+  ansible.builtin.stat:
+    path: /var/lib/agent/agent.key
+  register: agent_enrolled
+
+- name: Not enrolled and no token
+  ansible.builtin.fail:
+    msg: >-
+      Host {{ agent_host_id }} isn't enrolled. Open its enrollment on ctl-1 (POST /v1/hosts, or
+      /v1/hosts/{{ agent_host_id }}/enrollment), have the founder sign the returned authorization with
+      the release key, authorize it (POST /v1/hosts/{{ agent_host_id }}/enrollment/authorize), put the
+      bootstrap token in a file and run again with agent_enroll_token_file=<that file>.
+  when: not agent_enrolled.stat.exists and not agent_enroll_token_file
+
+- name: Enroll
+  when: not agent_enrolled.stat.exists
+  block:
+    - name: The one-time token, for the agent user only
+      ansible.builtin.copy:
+        src: "{{ agent_enroll_token_file }}"
+        dest: /var/lib/agent/enroll.token
+        owner: agent
+        group: agent
+        mode: "0600"
+      no_log: true
+
+    - name: Enroll with ctl-1 (keys made here; the authorization checked against the release key)
+      ansible.builtin.command: >-
+        runuser -u agent -- {{ agent_prefix }}/venv/bin/python -m hostagent.enroll
+        --config /etc/agent/agent.toml --token-file /var/lib/agent/enroll.token
+      register: agent_enroll
+      changed_when: true
+  always:
+    - name: The token is gone either way
+      ansible.builtin.file:
+        path: /var/lib/agent/enroll.token
+        state: absent
+
+- name: Run agentd
+  ansible.builtin.systemd_service:
+    name: agentd
+    enabled: true
+    daemon_reload: true
+    state: >-
+      {{ 'restarted' if (agent_installed is changed or agent_config is changed or agent_units is changed
+         or agent_ca is changed or agent_enroll is changed) else 'started' }}

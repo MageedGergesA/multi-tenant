@@ -1,0 +1,13 @@
+# Development ingress: Traefik as on an app host (ADR-007), websecure on 18443,
+# tenant routes from the files agent-exec writes. No ACME here: routers carry
+# `tls: {}` (cert_resolver = "" in exec.toml) and get the default certificate,
+# a wildcard for *.cloud.test from the dev CA (dev/up.sh).
+entryPoints:
+  websecure:
+    address: ":18443"
+providers:
+  file:
+    directory: /dynamic
+    watch: true
+log:
+  level: INFO

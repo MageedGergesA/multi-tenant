@@ -1,0 +1,61 @@
+---
+- name: Install base packages
+  ansible.builtin.apt:
+    name: "{{ base_packages }}"
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Keys only, no passwords (ADR-H0-003)
+  ansible.builtin.copy:
+    dest: /etc/ssh/sshd_config.d/10-ctl.conf
+    content: |
+      # infra/ansible role base
+      PasswordAuthentication no
+      KbdInteractiveAuthentication no
+      PermitRootLogin prohibit-password
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload sshd
+
+- name: Firewall
+  ansible.builtin.template:
+    src: nftables.conf.j2
+    dest: /etc/nftables.conf
+    owner: root
+    group: root
+    mode: "0644"
+    validate: nft -c -f %s
+  notify: Load nftables
+
+# Debian's unit stops (and restarts) with `nft flush ruleset`, which would take Docker's and the
+# tenants' tables too; this table only.
+- name: The nftables unit's drop-in directory
+  ansible.builtin.file:
+    path: /etc/systemd/system/nftables.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: The nftables unit removes only this table
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/nftables.service.d/table-only.conf
+    content: |
+      # Managed by Ansible: infra/ansible role base
+      [Service]
+      ExecReload=
+      ExecReload=/usr/sbin/nft -f /etc/nftables.conf
+      ExecStop=
+      ExecStop=-/usr/sbin/nft delete table inet filter
+    owner: root
+    group: root
+    mode: "0644"
+  register: base_nft_dropin
+
+- name: Enable nftables at boot
+  ansible.builtin.systemd_service:
+    name: nftables
+    enabled: true
+    daemon_reload: "{{ base_nft_dropin is changed }}"
+    state: started

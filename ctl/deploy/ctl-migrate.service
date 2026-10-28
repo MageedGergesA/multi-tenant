@@ -1,0 +1,42 @@
+# A schema migration (DOC-05 §2): `python -m ctlplane migrate` dumps to bucket
+# C, then upgrades. Starting it stops ctl.service (Conflicts=); a deploy is
+#   systemctl start ctl-migrate && systemctl start ctl
+[Unit]
+Description=ctl-1 schema migration after a dump to bucket C
+Documentation=file:///opt/ctl/README.md
+Requires=ctl-secrets.service postgresql.service
+# Conflicts= stops ctl but doesn't order it: with After=, its stop completes
+# before this starts (systemd orders a stop before a start either way round).
+After=ctl-secrets.service postgresql.service network-online.target ctl.service
+Wants=network-online.target
+Conflicts=ctl.service
+
+[Service]
+Type=oneshot
+User=ctl
+Group=ctl
+Environment=CTL_CONFIG=/etc/ctl/ctl.toml
+ExecStart=/opt/ctl/venv/bin/python -m ctlplane migrate
+UMask=0077
+InaccessiblePaths=-/etc/ctl/host.agekey -/etc/ctl/secrets.sops.yaml
+CapabilityBoundingSet=
+AmbientCapabilities=
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+LockPersonality=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources

@@ -1,0 +1,70 @@
+# promtool test rules monitoring/rules/backups_test.yml
+rule_files:
+  - backups.yml
+evaluation_interval: 1m
+tests:
+  # Backed up at t=0 (epoch 0 in promtool time); quiet at 25 h, firing after 26 h.
+  - interval: 1m
+    input_series:
+      - series: 'ctl_backup_last_recoverable_timestamp_seconds{tenant_id="t1",environment_id="e1"}'
+        values: '0+0x1600'
+      - series: 'up{job="ctl"}'
+        values: '1+0x1600'
+    alert_rule_test:
+      - eval_time: 25h
+        alertname: NoRecoverableDailyBackup
+        exp_alerts: []
+      - eval_time: 26h1m
+        alertname: NoRecoverableDailyBackup
+        exp_alerts:
+          - exp_labels: {severity: sev2, runbook: RB-01, tenant_id: t1, environment_id: e1}
+            exp_annotations:
+              summary: "No recoverable daily backup for 26 h: tenant t1"
+              description: "Environment e1: newest recoverable backup snapshot is 1d 2h 1m 0s old. DR-06 refuses module updates, relocations and deletes until one exists."
+  # A new backup at 20 h (value jumps to 72000 s) keeps it quiet past 26 h.
+  - interval: 1h
+    input_series:
+      - series: 'ctl_backup_last_recoverable_timestamp_seconds{tenant_id="t1",environment_id="e1"}'
+        values: '0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 72000 72000 72000 72000 72000 72000 72000 72000 72000 72000'
+      - series: 'up{job="ctl"}'
+        values: '1+0x30'
+    alert_rule_test:
+      - eval_time: 27h
+        alertname: NoRecoverableDailyBackup
+        exp_alerts: []
+  # Never backed up (0) is as old as can be.
+  - interval: 1h
+    input_series:
+      - series: 'ctl_backup_last_recoverable_timestamp_seconds{tenant_id="t2",environment_id="e2"}'
+        values: '0+0x30'
+      - series: 'up{job="ctl"}'
+        values: '1+0x30'
+    alert_rule_test:
+      - eval_time: 27h
+        alertname: NoRecoverableDailyBackup
+        exp_alerts:
+          - exp_labels: {severity: sev2, runbook: RB-01, tenant_id: t2, environment_id: e2}
+            exp_annotations:
+              summary: "No recoverable daily backup for 26 h: tenant t2"
+              description: "Environment e2: newest recoverable backup snapshot is 1d 3h 0m 0s old. DR-06 refuses module updates, relocations and deletes until one exists."
+  # Metrics gone: the backup alert can't fire, the scrape alert does.
+  - interval: 1m
+    input_series:
+      - series: 'up{job="ctl"}'
+        values: '0+0x30'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: CtlMetricsDown
+        exp_alerts:
+          - exp_labels: {severity: sev2, runbook: RB-01, job: ctl}
+            exp_annotations:
+              summary: "ctl-1 metrics not scraped for 10 min: backup age alerts are blind"
+  - interval: 1m
+    input_series: []
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: CtlMetricsDown
+        exp_alerts:
+          - exp_labels: {severity: sev2, runbook: RB-01, job: ctl}
+            exp_annotations:
+              summary: "ctl-1 metrics not scraped for 10 min: backup age alerts are blind"

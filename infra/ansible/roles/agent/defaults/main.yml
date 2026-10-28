@@ -1,0 +1,37 @@
+---
+# The host agent (DOC-04): agentd (unprivileged, polls ctl-1 over WireGuard with mutual TLS) and
+# agent-exec (the executor behind a Unix socket: root on an app host, postgres on db-1).
+agent_src: "{{ playbook_dir }}/../../agent"
+agent_prefix: /opt/agent
+# Required, no default:
+#   agent_host_id: the host's id in ctl-1 (POST /v1/hosts returns it)
+#   agent_role: app | db
+#   agent_trust_root: the release public key (base64), the root an enrollment is checked against
+#   agent_ctl_ca_file: the CA that signed ctl-1's server certificate, on the controller
+agent_ctl_wg_ip: 10.8.0.1
+agent_ctl_api_port: 8443
+agent_ctl_enroll_port: 8444
+agent_registry_host: ""
+# A file on the controller holding this host's one-time bootstrap token (ctl-1's POST /v1/hosts,
+# signed by the founder, authorized). Used only while the host isn't enrolled; removed after.
+agent_enroll_token_file: ""
+agent_workers: 4
+agent_db_hba_dir: "/etc/postgresql/16/main/hba.d"
+
+# -- role app (hostagent/backends.py AppHostConfig, hostagent/config.py) --------------------
+# Required on an app host: agent_app_db_host, db-1's private IP; agent_registry_host and
+# agent_app_repository, where tenant images are pulled by digest (<registry>/<repository>@sha256:...).
+agent_app_repository: ""
+agent_app_db_host: ""
+agent_app_mail_host: ""
+agent_app_resolver: ""
+agent_app_image_source: registry
+# As the app role's (Docker's remap base; Traefik's ACME resolver, '' = default certificate).
+agent_app_subuid_base: "{{ app_subuid_base | default(100000) }}"
+agent_app_cert_resolver: "{{ app_cert_resolver | default('le') }}"
+# Traefik's websecure entrypoint, probed with each tenant hostname (DOC-04 §6.1 steps 8–9).
+agent_ingress_url: "https://127.0.0.1"
+# The region's tenant backup bucket (bucket A); its credentials come with each step.
+agent_s3_endpoint: ""
+agent_s3_region: eu-central-003
+agent_s3_bucket: ""

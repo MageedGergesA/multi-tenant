@@ -1,0 +1,29 @@
+# {{ ansible_managed }}: infra/ansible role agent. agentd polls ctl-1 (DOC-04 §1, §7).
+[Unit]
+Description=host agent ({{ agent_role }})
+Requires=agent-exec.service
+After=agent-exec.service network-online.target wg-quick@wg0.service
+Wants=network-online.target
+# Not before enrollment: its key is written last (hostagent/enroll.py).
+ConditionPathExists=/var/lib/agent/agent.key
+
+[Service]
+Type=simple
+User=agent
+Group=agent
+ExecStart={{ agent_prefix }}/venv/bin/python -m hostagent.agentd_main --config /etc/agent/agent.toml
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/agent{{ ' /srv/backup-tmp' if agent_role == 'app' else '' }}
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+
+[Install]
+WantedBy=multi-user.target

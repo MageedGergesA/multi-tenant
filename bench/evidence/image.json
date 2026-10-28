@@ -1,0 +1,9 @@
+{
+  "tag": "bench/odoo:19.0-faee5d865473",
+  "image_id": "sha256:cc0a92bbbf7f35dd2fa4a6dd192f02765b0add3e05c3c34dedd8c5957174c1c4",
+  "odoo_commit": "faee5d8654738da089d0a0b61b1784675600295a",
+  "wkhtmltopdf": "wkhtmltopdf 0.12.6.1 (with patched qt)",
+  "python": "Python 3.12.3",
+  "built_at": "2026-10-25T17:20:56Z",
+  "note": "2026-10-25 rebuild: platform_defaults(create) sets admin password/lang/country; module-versions, backup-dump, restore-load one-shots"
+}

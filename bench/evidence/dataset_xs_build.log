@@ -1,0 +1,47 @@
+== bench_xs_eg: install sale_management,purchase,stock,account,crm,contacts,hr,mail,l10n_eg with demo seed
+2026-10-24 21:23:38,894 1 WARNING bench_xs_eg odoo.modules.module: addons path is not a directory: __editable__.odoo-19.0.finder.__path_hook__ 
+2026-10-24 21:23:50,459 1 WARNING bench_xs_eg odoo.modules.module: addons path is not a directory: __editable__.odoo-19.0.finder.__path_hook__ 
+== bench_xs_eg: platform_defaults(create) (DOC-04 §6.1 step 6a)
+PLATFORM_DEFAULTS {"scope": "create", "report.url": "http://127.0.0.1:8072", "admin.notification_type": "inbox", "ok": true}
+== bench_xs_eg: populate
+   --models=res.partner,product.template,sale.order,account.move,stock.picking --factors=3,2,12,3,6
+2026-10-24 21:25:25,087 1 WARNING ? odoo.tools.config: please use my_default= instead of default= with option --factors/factors 
+2026-10-24 21:25:25,087 1 WARNING ? odoo.tools.config: please use my_default= instead of default= with option --models/models_to_populate 
+2026-10-24 21:25:25,087 1 WARNING ? odoo.tools.config: please use my_default= instead of default= with option --sep/separator 
+2026-10-24 21:25:28,080 1 WARNING ? odoo.tools.populate: The field res_partner_res_partner_category_rel.category_id of type many2one was marked to be varied, but no variation branch was found! Defaulting to a raw copy. 
+2026-10-24 21:25:28,182 1 WARNING ? odoo.tools.populate: The field product_combo_product_template_rel.product_combo_id of type many2one was marked to be varied, but no variation branch was found! Defaulting to a raw copy. 
+2026-10-24 21:25:28,207 1 WARNING ? odoo.tools.populate: The field product_attribute_value_product_template_attribute_line_rel.product_attribute_value_id of type many2one was marked to be varied, but no variation branch was found! Defaulting to a raw copy. 
+2026-10-24 21:25:28,213 1 WARNING ? odoo.tools.populate: The field product_taxes_rel.tax_id of type many2one was marked to be varied, but no variation branch was found! Defaulting to a raw copy. 
+2026-10-24 21:25:28,220 1 WARNING ? odoo.tools.populate: The field product_supplier_taxes_rel.tax_id of type many2one was marked to be varied, but no variation branch was found! Defaulting to a raw copy. 
+2026-10-24 21:25:28,228 1 WARNING ? odoo.tools.populate: The field stock_route_product.route_id of type many2one was marked to be varied, but no variation branch was found! Defaulting to a raw copy. 
+2026-10-24 21:25:28,440 1 WARNING ? odoo.tools.populate: The field account_tax_sale_order_line_rel.account_tax_id of type many2one was marked to be varied, but no variation branch was found! Defaulting to a raw copy. 
+2026-10-24 21:25:28,448 1 WARNING ? odoo.tools.populate: The field sale_order_tag_rel.tag_id of type many2one was marked to be varied, but no variation branch was found! Defaulting to a raw copy. 
+2026-10-24 21:25:28,481 1 WARNING ? odoo.tools.populate: The field account.move.journal_id of type many2one was marked to be varied, but no variation branch was found! Defaulting to a raw copy. 
+2026-10-24 21:25:28,762 1 WARNING ? odoo.tools.populate: The field account_move_line_account_tax_rel.account_tax_id of type many2one was marked to be varied, but no variation branch was found! Defaulting to a raw copy. 
+2026-10-24 21:25:28,769 1 WARNING ? odoo.tools.populate: The field account_account_tag_account_move_line_rel.account_account_tag_id of type many2one was marked to be varied, but no variation branch was found! Defaulting to a raw copy. 
+2026-10-24 21:25:28,793 1 WARNING ? odoo.tools.populate: The field stock.picking.company_id of type many2one was marked to be varied, but no variation branch was found! Defaulting to a raw copy. 
+2026-10-24 21:25:28,938 1 WARNING ? odoo.tools.populate: The field stock_reference_move_rel.reference_id of type many2one was marked to be varied, but no variation branch was found! Defaulting to a raw copy. 
+== bench_xs_eg: populate stock moves
+   --models=stock.move,stock.move.line --factors=1,1
+2026-10-24 21:25:34,151 1 WARNING ? odoo.tools.config: please use my_default= instead of default= with option --factors/factors 
+2026-10-24 21:25:34,151 1 WARNING ? odoo.tools.config: please use my_default= instead of default= with option --models/models_to_populate 
+2026-10-24 21:25:34,151 1 WARNING ? odoo.tools.config: please use my_default= instead of default= with option --sep/separator 
+2026-10-24 21:25:37,091 1 WARNING ? odoo.tools.populate: The field stock_reference_move_rel.reference_id of type many2one was marked to be varied, but no variation branch was found! Defaulting to a raw copy. 
+== bench_xs_eg: users and attachments
+MOVE_LINES_BACKFILLED 660
+USERS 3 ATTACHMENTS 200
+== bench_xs_eg: counts
+partners 263
+products 111
+sale_orders 312
+invoices 336
+pickings 343
+stock_moves 1078
+stock_move_lines 804
+moves_per_picking 2.29
+attachments 1364
+db_bytes 72465431
+== bench_xs_eg: snapshot
+{"db": "bench_xs_eg", "band": "XS", "localisation": "eg", "image": "bench/odoo:19.0-faee5d865473",
+ "modules": "sale_management,purchase,stock,account,crm,contacts,hr,mail,l10n_eg", "created_at": "2026-10-24T21:25:46Z",
+ "sha256": "8bede98c34c4b83e5cb973e8c7846564ea7c14e7e9ea261f707d1e87b1864bfc"}

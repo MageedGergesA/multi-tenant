@@ -1,0 +1,40 @@
+# {{ ansible_managed }}: infra/ansible role agent. The host agent's executor (DOC-04 §1, §5).
+[Unit]
+Description=host agent executor ({{ agent_role }})
+{% if agent_role == 'db' %}
+After=postgresql.service
+Requires=postgresql.service
+{% else %}
+After=docker.service nftables.service
+Requires=docker.service
+RequiresMountsFor=/srv/tenants
+{% endif %}
+
+[Service]
+Type=simple
+User={{ agent_exec_user }}
+# The socket's directory (and on db-1 the socket) go to this group, which agentd is in.
+Group=agent-exec
+ExecStart={{ agent_prefix }}/venv/bin/python -m hostagent.exec_main --config /etc/agent/exec.toml
+RuntimeDirectory=agent-exec
+RuntimeDirectoryMode=0750
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+{% if agent_role == 'db' %}
+ProtectSystem=strict
+ReadWritePaths={{ agent_db_hba_dir }} /var/log/agent-exec
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_UNIX
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+# Back from @privileged: it gives its socket to the agent-exec group (chown to a group it is in;
+# without capabilities it can't chown anything to another user).
+SystemCallFilter=@chown
+{% endif %}
+
+[Install]
+WantedBy=multi-user.target

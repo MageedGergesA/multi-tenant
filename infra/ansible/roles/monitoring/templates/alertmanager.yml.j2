@@ -1,0 +1,31 @@
+# {{ ansible_managed }}: infra/ansible role monitoring
+route:
+  receiver: ctl
+  group_by: [alertname, tenant_id, environment_id, worker]
+  group_wait: {{ monitoring_group_wait }}
+  group_interval: 5m
+  repeat_interval: 4h
+  routes:
+    - matchers: ['alertname = "Watchdog"']
+      receiver: {{ 'deadman' if monitoring_deadman_url else 'none' }}
+      group_wait: 0s
+      group_interval: {{ monitoring_deadman_interval }}
+      repeat_interval: {{ monitoring_deadman_interval }}
+
+receivers:
+  # Every alert becomes a ctl incident (ctl/ctlplane/monitoring.py, POST /v1/alertmanager).
+  - name: ctl
+    webhook_configs:
+      - url: "http://{{ monitoring_ctl_metrics }}/v1/alertmanager"
+        send_resolved: true
+        http_config:
+          authorization:
+            type: Bearer
+            credentials_file: /etc/prometheus/ctl-webhook.token
+  - name: none
+{% if monitoring_deadman_url %}
+  - name: deadman
+    webhook_configs:
+      - url: "{{ monitoring_deadman_url }}"
+        send_resolved: false
+{% endif %}

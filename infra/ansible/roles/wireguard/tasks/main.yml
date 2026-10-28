@@ -1,0 +1,30 @@
+---
+- name: The host's WireGuard key (made here; it never leaves the host)
+  ansible.builtin.shell: umask 077 && wg genkey > /etc/wireguard/wg0.key
+  args:
+    creates: /etc/wireguard/wg0.key
+
+- name: Read the public key
+  ansible.builtin.shell: wg pubkey < /etc/wireguard/wg0.key
+  register: wireguard_public_key
+  changed_when: false
+
+- name: Show the public key (peers need it)
+  ansible.builtin.debug:
+    msg: "ctl-1 WireGuard public key: {{ wireguard_public_key.stdout }}"
+
+- name: Interface and peers
+  ansible.builtin.template:
+    src: wg0.conf.j2
+    dest: /etc/wireguard/wg0.conf
+    owner: root
+    group: root
+    mode: "0600"
+  notify: Restart wg0
+
+- name: Bring wg0 up at boot
+  ansible.builtin.systemd_service:
+    name: wg-quick@wg0
+    enabled: true
+    state: started
+  when: wireguard_start | bool

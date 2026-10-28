@@ -1,0 +1,20 @@
+---
+# SSH over the public network while bootstrapping only (ADR-H0-003); empty afterwards.
+base_admin_cidrs: []
+# The WireGuard port is the wireguard role's (wireguard_port).
+# Reached only through WireGuard: ctl-1's agent API and enrollment ([] elsewhere: agents open no port).
+base_wg_tcp_ports: [8443, 8444]
+# Reached over the private network from given ranges: [{port, cidr}], e.g. db-1's PostgreSQL from the
+# app hosts. Hetzner Cloud firewalls don't filter the private network; this does.
+base_private_allow: []
+# Open to anyone (an app host: Traefik's 80 and 443).
+base_public_tcp_ports: []
+# Forward to and from Docker's bridges (an app host).
+base_forward_docker: false
+base_packages:
+  - nftables
+  - wireguard-tools
+  - age
+  - python3-venv
+  - unattended-upgrades
+  - ca-certificates

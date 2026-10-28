@@ -1,0 +1,20 @@
+#!/bin/sh
+# platform-defaults create <lang> <country> [odoo options]
+# platform-defaults copy [odoo options]
+# DOC-04 §5.4 fixed one-shot template. The tenant admin password is read from
+# /run/tenant/tenant_admin_password, never from the command line.
+set -eu
+case "${1:-}" in
+    create)
+        lang=${2:-}; country=${3:-}
+        case "$lang" in en_US|ar_001) ;; *) echo "bad lang" >&2; exit 2 ;; esac
+        echo "$country" | grep -Eq '^[A-Z]{2}$' || { echo "bad country" >&2; exit 2; }
+        shift 3
+        export PLATFORM_LANG=$lang PLATFORM_COUNTRY=$country
+        export PLATFORM_ADMIN_PASSWORD_FILE=${PLATFORM_ADMIN_PASSWORD_FILE:-/run/tenant/tenant_admin_password}
+        scope=create ;;
+    copy) scope=copy; shift ;;
+    *) echo "usage: platform-defaults create <lang> <country> | copy [odoo options]" >&2; exit 2 ;;
+esac
+PLATFORM_SCOPE=$scope odoo shell --no-http --log-level=warn "$@" < /opt/platform/platform_defaults.py \
+    | grep '^PLATFORM_DEFAULTS ' | tee /dev/stderr | grep -q '"ok": true'

@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+*.db
+*.sock
+dev/.env
+dev/exec.toml
+dev/traefik/certs/

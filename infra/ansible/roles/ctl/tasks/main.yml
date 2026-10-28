@@ -1,0 +1,317 @@
+---
+- name: Required variables
+  ansible.builtin.assert:
+    that: lookup('ansible.builtin.vars', item, default='') | string | length > 0
+    fail_msg: "{{ item }} is required (inventory.example.yml)"
+    quiet: true
+  loop: [ctl_sops_file, ctl_tls_cert_file, ctl_agents_ca_cert_file, ctl_jwks_file, ctl_oidc_issuer,
+         ctl_oidc_audience, ctl_monitoring_webhook_token_sha256, ctl_bucket_c, ctl_recovery_recipient]
+
+- name: The release key is required (enrollment is signed with it)
+  ansible.builtin.assert:
+    that: ctl_trust.release_public_key | default('') | length > 0
+    fail_msg: ctl_trust.release_public_key is required (inventory.example.yml)
+    quiet: true
+
+- name: The ctl user
+  ansible.builtin.user:
+    name: ctl
+    system: true
+    shell: /usr/sbin/nologin
+    home: /var/lib/ctl
+    create_home: true
+
+- name: Directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: root
+    group: "{{ item.group }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - {path: "{{ ctl_prefix }}", group: root, mode: "0755"}
+    - {path: /etc/ctl, group: ctl, mode: "0750"}
+    - {path: /usr/local/lib/ctl, group: root, mode: "0755"}
+
+# -- secrets (ADR-006; ctl/deploy/write_secrets.py) ----------------------------------
+
+- name: Install sops {{ ctl_sops_version }}
+  ansible.builtin.get_url:
+    url: "https://github.com/getsops/sops/releases/download/v{{ ctl_sops_version }}/sops-v{{ ctl_sops_version }}.linux.amd64"
+    dest: /usr/local/bin/sops
+    checksum: "sha256:{{ ctl_sops_sha256 }}"
+    owner: root
+    group: root
+    mode: "0755"
+  when: ctl_sops_install | bool
+
+- name: The host's age key (made here; it never leaves the host)
+  ansible.builtin.shell: umask 077 && age-keygen -o /etc/ctl/host.agekey
+  args:
+    creates: /etc/ctl/host.agekey
+
+- name: The host key is root's only
+  ansible.builtin.file:
+    path: /etc/ctl/host.agekey
+    owner: root
+    group: root
+    mode: "0400"
+
+- name: Read the host's age recipient
+  ansible.builtin.command: age-keygen -y /etc/ctl/host.agekey
+  register: ctl_host_recipient
+  changed_when: false
+
+- name: The SOPS file (encrypted)
+  ansible.builtin.copy:
+    src: "{{ ctl_sops_file }}"
+    dest: /etc/ctl/secrets.sops.yaml
+    owner: root
+    group: root
+    mode: "0400"
+  notify: Restart ctl-secrets
+
+- name: Install write-secrets
+  ansible.builtin.copy:
+    src: "{{ ctl_src }}/deploy/write_secrets.py"
+    dest: /usr/local/lib/ctl/write-secrets
+    owner: root
+    group: root
+    mode: "0755"
+  notify: Restart ctl-secrets
+
+# -- the package ---------------------------------------------------------------------
+
+# Deterministic, so the copy below changes only when the code does.
+- name: Bundle ctl on the controller
+  ansible.builtin.command:  # noqa: command-instead-of-module (unarchive can't create; this is reproducible)
+    cmd: >-
+      tar --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner
+      --exclude=__pycache__ --exclude=*.pyc -C {{ ctl_src }}
+      -cf {{ playbook_dir }}/.build/ctl.tar ctlplane migrations pyproject.toml requirements.lock alembic.ini
+  delegate_to: localhost
+  become: false
+  run_once: true
+  changed_when: false
+
+- name: Copy the bundle
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/.build/ctl.tar"
+    dest: "{{ ctl_prefix }}/ctl.tar"
+    owner: root
+    group: root
+    mode: "0644"
+  register: ctl_bundle
+
+# Written only after a successful install: a run that failed mid-install retries next time,
+# though the bundle is already in place and the venv exists.
+- name: Which bundle is installed?
+  ansible.builtin.slurp:
+    src: "{{ ctl_prefix }}/installed-bundle"
+  register: ctl_installed_bundle
+  failed_when: false
+
+- name: Unpack and install (a bundle not installed yet)
+  when: (ctl_installed_bundle.content | default('') | b64decode | trim) != ctl_bundle.checksum
+  block:
+    - name: Remove the previous source
+      ansible.builtin.file:
+        path: "{{ ctl_prefix }}/src"
+        state: absent
+
+    - name: Source directory
+      ansible.builtin.file:
+        path: "{{ ctl_prefix }}/src"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Unpack
+      ansible.builtin.unarchive:
+        src: "{{ ctl_prefix }}/ctl.tar"
+        dest: "{{ ctl_prefix }}/src"
+        remote_src: true
+        owner: root
+        group: root
+
+    - name: Virtualenv
+      ansible.builtin.command:
+        cmd: python3 -m venv {{ ctl_prefix }}/venv
+        creates: "{{ ctl_prefix }}/venv/bin/python"
+
+    # The versions ctl is tested with, as constraints.
+    - name: Install ctl
+      ansible.builtin.command:
+        cmd: >-
+          {{ ctl_prefix }}/venv/bin/pip install --no-cache-dir --disable-pip-version-check -q
+          -c {{ ctl_prefix }}/src/requirements.lock {{ ctl_prefix }}/src
+      changed_when: true
+      register: ctl_installed
+
+    - name: Record the installed bundle
+      ansible.builtin.copy:
+        content: "{{ ctl_bundle.checksum }}\n"
+        dest: "{{ ctl_prefix }}/installed-bundle"
+        owner: root
+        group: root
+        mode: "0644"
+
+- name: TLS certificates and the IdP's keys (public)
+  ansible.builtin.copy:
+    src: "{{ item.src }}"
+    dest: "/etc/ctl/{{ item.dest }}"
+    owner: root
+    group: ctl
+    mode: "0640"
+  loop:
+    - {src: "{{ ctl_tls_cert_file }}", dest: ctl-1.pem}
+    - {src: "{{ ctl_agents_ca_cert_file }}", dest: agents-ca.pem}
+    - {src: "{{ ctl_jwks_file }}", dest: jwks.json}
+  register: ctl_public_files
+
+- name: Configuration
+  ansible.builtin.template:
+    src: ctl.toml.j2
+    dest: /etc/ctl/ctl.toml
+    owner: root
+    group: ctl
+    mode: "0640"
+  register: ctl_config
+
+- name: Units
+  ansible.builtin.copy:
+    src: "{{ ctl_src }}/deploy/{{ item }}"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop: [ctl-secrets.service, ctl.service, ctl-migrate.service]
+  register: ctl_units
+
+- name: Reload systemd and restart ctl-secrets if its inputs changed
+  ansible.builtin.meta: flush_handlers
+
+- name: Secrets onto tmpfs
+  block:
+    - name: Start ctl-secrets
+      ansible.builtin.systemd_service:
+        name: ctl-secrets
+        enabled: true
+        state: started
+        daemon_reload: true      # the units may be new
+  rescue:
+    - name: Explain (a new host's key isn't in the SOPS file yet)
+      ansible.builtin.fail:
+        msg: >-
+          ctl-secrets failed (journalctl -u ctl-secrets). On a new host: add this host's recipient
+          {{ ctl_host_recipient.stdout }} to the SOPS file's creation_rules, run `sops updatekeys`
+          on it, and run this playbook again.
+
+- name: Every secret the configuration names is there
+  ansible.builtin.stat:
+    path: "/run/ctl/{{ item }}"
+  loop: "{{ ctl_secret_keys }}"
+  register: ctl_secret_files
+
+- name: Missing keys in the SOPS file
+  ansible.builtin.assert:
+    that: missing | length == 0
+    fail_msg: "The SOPS file lacks: {{ missing | join(', ') }}"
+    quiet: true
+  vars:
+    missing: "{{ ctl_secret_files.results | rejectattr('stat.exists') | map(attribute='item') | list }}"
+
+# The owner's password lives in the SOPS file (database_url); PostgreSQL gets
+# its SCRAM verifier, computed here, never the password.
+- name: The database owner's password matches the SOPS file
+  ansible.builtin.command:
+    cmd: "{{ ctl_prefix }}/venv/bin/python -I -"
+    stdin: |
+      import psycopg, subprocess, sys
+      from psycopg.conninfo import conninfo_to_dict
+      from ctlplane.vault import scram_verifier
+      dsn = open('/run/ctl/database_url').read().strip()
+      try:
+          psycopg.connect(dsn, connect_timeout=5).close()
+          sys.exit(0)
+      except psycopg.OperationalError:
+          pass
+      params = conninfo_to_dict(dsn)
+      sql = "ALTER ROLE %s PASSWORD '%s'" % (params['user'], scram_verifier(params['password']))
+      subprocess.run(['runuser', '-u', 'postgres', '--', 'psql', '-X', '-q', '-v', 'ON_ERROR_STOP=1', '-d', 'postgres'],
+                     input=sql, text=True, check=True)
+      psycopg.connect(dsn, connect_timeout=5).close()
+      print('password set')
+  register: ctl_owner_password
+  changed_when: "'password set' in ctl_owner_password.stdout"
+  no_log: true
+
+# -- schema, then serve ----------------------------------------------------------------
+
+- name: Is the schema at the migrations' head?
+  ansible.builtin.command: runuser -u ctl -- env CTL_CONFIG=/etc/ctl/ctl.toml {{ ctl_prefix }}/venv/bin/python -m ctlplane check
+  register: ctl_check
+  changed_when: false
+  failed_when: ctl_check.rc not in [0, 1]
+
+- name: Migrate (dump to bucket C first; stops ctl while it runs)
+  ansible.builtin.systemd_service:
+    name: ctl-migrate
+    state: started
+  when: not (ctl_check.stdout | from_json).ok
+
+- name: Check again
+  ansible.builtin.command: runuser -u ctl -- env CTL_CONFIG=/etc/ctl/ctl.toml {{ ctl_prefix }}/venv/bin/python -m ctlplane check
+  changed_when: false
+  when: not (ctl_check.stdout | from_json).ok
+
+# Which bundle the running ctl was started with: written only once it answers (below), so a run
+# interrupted between install and restart restarts it next time.
+- name: Which bundle is running?
+  ansible.builtin.slurp:
+    src: "{{ ctl_prefix }}/active-bundle"
+  register: ctl_active_bundle
+  failed_when: false
+
+- name: Register root keys and regions (idempotent)
+  ansible.builtin.command: runuser -u ctl -- env CTL_CONFIG=/etc/ctl/ctl.toml {{ ctl_prefix }}/venv/bin/python -m ctlplane bootstrap
+  register: ctl_bootstrap
+  changed_when: >-
+    (ctl_bootstrap.stdout | from_json).keys_registered | length > 0
+    or (ctl_bootstrap.stdout | from_json).regions_registered | length > 0
+
+- name: A configured region differs from ctl-1's (left as it is)
+  ansible.builtin.debug:
+    msg: "Regions differing from ctl_regions: {{ (ctl_bootstrap.stdout | from_json).regions_differing }}"
+  when: (ctl_bootstrap.stdout | from_json).regions_differing | length > 0
+
+# Restarted only now, with secrets and schema in place: earlier its `check` would fail.
+- name: Serve
+  ansible.builtin.systemd_service:
+    name: ctl
+    enabled: true
+    daemon_reload: true
+    state: "{{ 'restarted' if ctl_changed else 'started' }}"
+  vars:
+    ctl_changed: >-
+      {{ (ctl_installed is changed) or (ctl_public_files is changed) or (ctl_config is changed)
+         or (ctl_units is changed)
+         or (ctl_active_bundle.content | default('') | b64decode | trim) != ctl_bundle.checksum }}
+
+- name: Wait for ctl's monitoring port with the workers running
+  ansible.builtin.uri:
+    url: "http://{{ ctl_monitoring_listen }}/metrics"
+    return_content: true
+  register: ctl_metrics
+  until: "'\nctl_workers_leader 1\n' in ctl_metrics.content"
+  retries: 30
+  delay: 2
+
+- name: Record the running bundle
+  ansible.builtin.copy:
+    content: "{{ ctl_bundle.checksum }}\n"
+    dest: "{{ ctl_prefix }}/active-bundle"
+    owner: root
+    group: root
+    mode: "0644"

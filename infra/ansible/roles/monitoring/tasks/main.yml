@@ -1,0 +1,119 @@
+---
+- name: Install Prometheus and Alertmanager
+  ansible.builtin.apt:
+    name: [prometheus, prometheus-alertmanager]
+    install_recommends: false            # no node exporter: ctl-1's own metrics are ctl's
+
+# The webhook's bearer token is made here and never leaves the host: ctl gets its
+# SHA-256 (ctl.toml webhook_token_sha256), Alertmanager the file.
+- name: The Alertmanager webhook token
+  ansible.builtin.shell: umask 027 && openssl rand -hex 32 > /etc/prometheus/ctl-webhook.token
+  args:
+    creates: /etc/prometheus/ctl-webhook.token
+
+- name: Only root and Alertmanager read it
+  ansible.builtin.file:
+    path: /etc/prometheus/ctl-webhook.token
+    owner: root
+    group: prometheus
+    mode: "0640"
+
+- name: Its SHA-256, for ctl
+  ansible.builtin.shell: set -o pipefail && tr -d '\n' < /etc/prometheus/ctl-webhook.token | sha256sum | cut -d' ' -f1
+  args:
+    executable: /bin/bash
+  register: monitoring_token_sha256
+  changed_when: false
+
+- name: Its hash, for the ctl role (ctl_monitoring_webhook_token_sha256 defaults to it)
+  ansible.builtin.set_fact:
+    monitoring_webhook_token_sha256: "{{ monitoring_token_sha256.stdout }}"
+
+- name: Rules directory
+  ansible.builtin.file:
+    path: /etc/prometheus/rules/ctl
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+# ctl/monitoring/rules, without the promtool tests; each checked before it is installed.
+- name: Install ctl's alert rules
+  ansible.builtin.copy:
+    src: "{{ item }}"
+    dest: "/etc/prometheus/rules/ctl/{{ item | basename }}"
+    owner: root
+    group: root
+    mode: "0644"
+    validate: promtool check rules %s
+  loop: "{{ query('ansible.builtin.fileglob', monitoring_ctl_src + '/monitoring/rules/*.yml') | reject('search', '_test\\.yml$') | list }}"
+  notify: Reload prometheus
+
+- name: Watchdog (always firing; the dead-man's heartbeat)
+  ansible.builtin.copy:
+    dest: /etc/prometheus/rules/ctl/watchdog.yml
+    content: |
+      # Managed by infra/ansible role monitoring. RB-25.
+      groups:
+        - name: watchdog
+          rules:
+            - alert: Watchdog
+              expr: vector(1)
+              labels:
+                severity: none
+              annotations:
+                summary: "Always firing: Prometheus and Alertmanager on ctl-1 are working"
+    owner: root
+    group: root
+    mode: "0644"
+    validate: promtool check rules %s
+  notify: Reload prometheus
+
+- name: Prometheus configuration
+  ansible.builtin.template:
+    src: prometheus.yml.j2
+    dest: /etc/prometheus/prometheus.yml
+    owner: root
+    group: root
+    mode: "0644"
+    validate: promtool check config --syntax-only %s
+  notify: Reload prometheus
+
+- name: Alertmanager configuration
+  ansible.builtin.template:
+    src: alertmanager.yml.j2
+    dest: /etc/prometheus/alertmanager.yml
+    owner: root
+    group: prometheus
+    mode: "0640"
+    validate: amtool check-config %s
+  notify: Restart alertmanager
+
+- name: Loopback only; Alertmanager without clustering
+  ansible.builtin.copy:
+    dest: "/etc/default/{{ item.name }}"
+    content: |
+      # Managed by infra/ansible role monitoring
+      ARGS="{{ item.args }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - name: prometheus
+      args: >-
+        --web.listen-address={{ monitoring_prometheus_listen }}
+        --storage.tsdb.retention.time={{ monitoring_retention }}
+    - name: prometheus-alertmanager
+      args: >-
+        --web.listen-address={{ monitoring_alertmanager_listen }} --cluster.listen-address=
+  notify: [Restart prometheus, Restart alertmanager]
+
+- name: Run them
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    enabled: true
+    state: started
+  loop: [prometheus, prometheus-alertmanager]
+
+- name: Apply changes now
+  ansible.builtin.meta: flush_handlers

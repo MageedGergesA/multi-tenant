@@ -1,0 +1,13 @@
+---
+# ctl-1's host configuration (ADR-009, DOC-05 §6.6). The server itself is
+# infra/tofu. Run twice on a new host: the first run creates the host's age
+# key and stops, printing its recipient for the SOPS file (README, "Bootstrap").
+- name: Configure ctl-1
+  hosts: ctl
+  become: true
+  roles:
+    - base
+    - wireguard
+    - postgresql
+    - monitoring     # before ctl: it makes the webhook token whose hash ctl.toml holds
+    - ctl

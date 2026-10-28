@@ -1,0 +1,55 @@
+{
+ "_note": "DOC-04 \u00a73 release manifest schema, exported from hostagent.ops.RELEASE_MANIFEST; tests/test_contract.py checks they are equal.",
+ "additionalProperties": false,
+ "properties": {
+  "addon_manifest_sha256": {
+   "pattern": "^[0-9a-f]{64}$",
+   "type": "string"
+  },
+  "cell": {
+   "maxLength": 128,
+   "type": "string"
+  },
+  "change_class": {
+   "enum": [
+    "patch",
+    "module_update",
+    "major"
+   ]
+  },
+  "image_digest": {
+   "pattern": "^sha256:[0-9a-f]{64}$",
+   "type": "string"
+  },
+  "module_versions": {
+   "additionalProperties": {
+    "maxLength": 32,
+    "type": "string"
+   },
+   "maxProperties": 2000,
+   "propertyNames": {
+    "pattern": "^[a-z0-9_]{1,64}$",
+    "type": "string"
+   },
+   "type": "object"
+  },
+  "release_signature": {
+   "maxLength": 128,
+   "type": "string"
+  },
+  "repository": {
+   "pattern": "^[a-z0-9][a-z0-9._/-]{0,127}$",
+   "type": "string"
+  }
+ },
+ "required": [
+  "cell",
+  "repository",
+  "image_digest",
+  "change_class",
+  "addon_manifest_sha256",
+  "module_versions",
+  "release_signature"
+ ],
+ "type": "object"
+}

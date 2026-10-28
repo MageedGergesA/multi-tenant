@@ -1,0 +1,9 @@
+{
+  "_doc": "DOC-06 §3 target volumes. XS is a local smoke band, not a DOC-06 band.",
+  "XS": {"users": 3,  "partners": 200,   "products": 100,  "sale_orders": 300,   "invoices": 300,   "pickings": 300, "stock_moves": 1200,   "attachments": 200,   "attachment_kb": 150},
+  "S":  {"users": 10, "partners": 2000,  "products": 500,  "sale_orders": 5000,  "invoices": 5000,  "pickings": 5000, "stock_moves": 20000,  "attachments": 10000, "attachment_kb": 150},
+  "M":  {"users": 25, "partners": 5000,  "products": 2000, "sale_orders": 20000, "invoices": 20000, "pickings": 20000, "stock_moves": 80000, "attachments": 30000, "attachment_kb": 150},
+  "L":  {"users": 50, "partners": 15000, "products": 5000, "sale_orders": 60000, "invoices": 60000, "pickings": 62500, "stock_moves": 250000, "attachments": 80000, "attachment_kb": 150},
+  "modules": "sale_management,purchase,stock,account,crm,contacts,hr,mail",
+  "localisation": {"eg": "l10n_eg", "sa": "l10n_sa"}
+}

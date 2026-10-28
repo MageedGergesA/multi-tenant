@@ -1,0 +1,6 @@
+#!/bin/sh
+# Test only (infra/test/run.sh): stands in for `sops --decrypt --output-type json FILE`
+# where FILE is age-encrypted JSON. The real host gets the real sops (role ctl).
+set -eu
+for last; do :; done
+exec age --decrypt -i "$SOPS_AGE_KEY_FILE" "$last"

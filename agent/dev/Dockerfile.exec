@@ -1,0 +1,6 @@
+# Development stand-in for agent-exec running as root on an app host.
+FROM python:3.12-slim
+RUN pip install --no-cache-dir docker==7.2.0 pyrage==1.4.0
+COPY hostagent /opt/hostagent/hostagent
+ENV PYTHONPATH=/opt/hostagent PYTHONDONTWRITEBYTECODE=1
+ENTRYPOINT ["python", "-m", "hostagent.exec_main"]

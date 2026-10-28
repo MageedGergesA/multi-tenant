@@ -1,0 +1,14 @@
+---
+- name: Reload sshd
+  ansible.builtin.command: sshd -t
+  changed_when: true
+  notify: Reload ssh service
+
+- name: Reload ssh service
+  ansible.builtin.systemd_service:
+    name: ssh
+    state: reloaded
+
+- name: Load nftables
+  ansible.builtin.command: nft -f /etc/nftables.conf
+  changed_when: true

@@ -1,0 +1,237 @@
+{
+  "test_id": "SMOKE-XS-w2c1",
+  "image": "bench/odoo:19.0-faee5d865473",
+  "image_id": "sha256:a2ce2fb0cdc8aed5da3958564844a431d02bf4bf7a8b795c579c450e38c8e45c",
+  "dataset": {
+    "db": "bench_xs_eg",
+    "band": "XS",
+    "localisation": "eg",
+    "image": "bench/odoo:19.0-faee5d865473",
+    "modules": "sale_management,purchase,stock,account,crm,contacts,hr,mail,l10n_eg",
+    "created_at": "2026-10-24T17:00:42Z",
+    "sha256": "ddc81a9dd0ecb9ded00b29abddcecb2487f7bdfdb0870e71ebf6b75cc58727b5"
+  },
+  "runtime": "runc",
+  "workers": 2,
+  "max_cron_threads": 1,
+  "named_users": 3,
+  "concurrent_users": 12,
+  "think_mean_s": 2.0,
+  "duration": "4m",
+  "started_at": "2026-10-24T17:35:09Z",
+  "finished_at": "2026-10-24T17:39:10Z",
+  "host": "mageed-Latitude-5501",
+  "verdict": {
+    "pass": true,
+    "classes": {
+      "heavy": [
+        {
+          "name": "heavy:import 100 lines",
+          "n": 15,
+          "fail": 0,
+          "p95": 0.15,
+          "p99": 0.15,
+          "pass": true
+        },
+        {
+          "name": "heavy:import create",
+          "n": 15,
+          "fail": 0,
+          "p95": 0.051,
+          "p99": 0.051,
+          "pass": true
+        },
+        {
+          "name": "heavy:invoice graph 12m",
+          "n": 63,
+          "fail": 0,
+          "p95": 0.27,
+          "p99": 1.8,
+          "pass": true
+        },
+        {
+          "name": "heavy:invoice pdf x10",
+          "n": 19,
+          "fail": 0,
+          "p95": 3.1,
+          "p99": 3.1,
+          "pass": true
+        },
+        {
+          "name": "heavy:receivable group",
+          "n": 35,
+          "fail": 0,
+          "p95": 0.75,
+          "p99": 1.6,
+          "pass": true
+        },
+        {
+          "name": "heavy:sales pivot 12m",
+          "n": 65,
+          "fail": 0,
+          "p95": 1.2,
+          "p99": 1.7,
+          "pass": true
+        }
+      ],
+      "pdf": [
+        {
+          "name": "pdf:invoice single",
+          "n": 28,
+          "fail": 0,
+          "p95": 2.7,
+          "p99": 4.1,
+          "pass": true
+        }
+      ],
+      "read": [
+        {
+          "name": "read:account.move list",
+          "n": 138,
+          "fail": 0,
+          "p95": 0.18,
+          "p99": 1.6,
+          "pass": true
+        },
+        {
+          "name": "read:partner search",
+          "n": 164,
+          "fail": 0,
+          "p95": 0.88,
+          "p99": 1.4,
+          "pass": true
+        },
+        {
+          "name": "read:product search",
+          "n": 137,
+          "fail": 0,
+          "p95": 0.25,
+          "p99": 1.4,
+          "pass": true
+        },
+        {
+          "name": "read:sale.order list",
+          "n": 186,
+          "fail": 0,
+          "p95": 0.41,
+          "p99": 1.8,
+          "pass": true
+        },
+        {
+          "name": "read:stock.quant list",
+          "n": 109,
+          "fail": 0,
+          "p95": 0.75,
+          "p99": 1.7,
+          "pass": true
+        }
+      ],
+      "write": [
+        {
+          "name": "write:attachment create",
+          "n": 39,
+          "fail": 0,
+          "p95": 0.077,
+          "p99": 0.15,
+          "pass": true
+        },
+        {
+          "name": "write:invoice post",
+          "n": 79,
+          "fail": 0,
+          "p95": 0.28,
+          "p99": 0.35,
+          "pass": true
+        },
+        {
+          "name": "write:invoice save",
+          "n": 80,
+          "fail": 0,
+          "p95": 1.0,
+          "p99": 1.6,
+          "pass": true
+        },
+        {
+          "name": "write:message_post",
+          "n": 90,
+          "fail": 0,
+          "p95": 0.22,
+          "p99": 0.38,
+          "pass": true
+        },
+        {
+          "name": "write:message_post attachment",
+          "n": 39,
+          "fail": 0,
+          "p95": 0.16,
+          "p99": 0.2,
+          "pass": true
+        },
+        {
+          "name": "write:payment create",
+          "n": 79,
+          "fail": 0,
+          "p95": 0.5,
+          "p99": 2.5,
+          "pass": true
+        },
+        {
+          "name": "write:payment register",
+          "n": 79,
+          "fail": 0,
+          "p95": 0.25,
+          "p99": 1.2,
+          "pass": true
+        },
+        {
+          "name": "write:receipt confirm",
+          "n": 85,
+          "fail": 0,
+          "p95": 0.27,
+          "p99": 0.41,
+          "pass": true
+        },
+        {
+          "name": "write:receipt save",
+          "n": 85,
+          "fail": 0,
+          "p95": 0.25,
+          "p99": 0.39,
+          "pass": true
+        },
+        {
+          "name": "write:receipt validate",
+          "n": 85,
+          "fail": 0,
+          "p95": 0.4,
+          "p99": 1.9,
+          "pass": true
+        },
+        {
+          "name": "write:sale.order confirm",
+          "n": 90,
+          "fail": 0,
+          "p95": 0.36,
+          "p99": 1.7,
+          "pass": true
+        },
+        {
+          "name": "write:sale.order onchange",
+          "n": 90,
+          "fail": 0,
+          "p95": 0.31,
+          "p99": 1.8,
+          "pass": true
+        },
+        {
+          "name": "write:sale.order save",
+          "n": 90,
+          "fail": 0,
+          "p95": 0.31,
+          "p99": 0.34,
+          "pass": true
+        }
+      ]
+    }
+  }
+}

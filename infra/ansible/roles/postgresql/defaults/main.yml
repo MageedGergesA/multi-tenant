@@ -1,0 +1,5 @@
+---
+# Ubuntu 24.04's own PostgreSQL 16 (ADR-010's cell; security updates from Ubuntu).
+postgresql_version: 16
+postgresql_ctl_db: ctl
+postgresql_ctl_owner: ctl_owner

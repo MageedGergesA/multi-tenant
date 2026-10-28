@@ -1,0 +1,16 @@
+---
+# Prometheus and Alertmanager on ctl-1 (ADR-008, DOC-05 §8), Ubuntu's own packages,
+# loopback only. Alerts become ctl incidents through ctl's webhook.
+monitoring_ctl_src: "{{ playbook_dir }}/../../ctl"
+monitoring_ctl_metrics: 127.0.0.1:9464          # ctl's monitoring listener (ctl_monitoring_listen)
+monitoring_prometheus_listen: 127.0.0.1:9090
+monitoring_alertmanager_listen: 127.0.0.1:9093
+monitoring_scrape_interval: 30s
+monitoring_evaluation_interval: 30s
+monitoring_group_wait: 30s
+monitoring_retention: 30d
+# RB-25: an always-firing Watchdog sent here (an external heartbeat service, e.g. a
+# healthchecks.io ping URL) so a silent Prometheus/Alertmanager is noticed elsewhere.
+# Empty: no dead-man (the README says what that leaves uncovered).
+monitoring_deadman_url: ""
+monitoring_deadman_interval: 5m

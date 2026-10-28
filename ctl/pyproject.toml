@@ -1,0 +1,20 @@
+[project]
+name = "ctlplane"
+version = "0.1.0"
+description = "Odoo Cloud Platform control plane, ctl-1 (ADR-009, DOC-03)"
+requires-python = ">=3.12"
+dependencies = ["fastapi", "uvicorn", "psycopg[binary]", "pynacl", "rfc8785", "alembic", "sqlalchemy", "jsonschema",
+                "pyjwt[crypto]", "pyrage", "boto3", "cryptography"]
+
+[project.optional-dependencies]
+# plus ../agent's hostagent on the path, for the end-to-end and contract tests (README "Dev")
+test = ["pytest", "httpx"]
+
+[tool.setuptools]
+packages = ["ctlplane"]
+
+[tool.setuptools.package-data]
+ctlplane = ["params.schema.json", "release_manifest.schema.json"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

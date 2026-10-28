@@ -1,0 +1,8 @@
+# {{ ansible_managed }}: infra/ansible role db_host
+# TYPE  DATABASE  USER      ADDRESS       METHOD
+local   all       postgres                peer
+# One file per tenant, written by the agent (hostagent/pg_backend.py): hostssl, its role,
+# its database (and postgres), the app host's /32, scram-sha-256.
+include_dir {{ db_host_hba_dir }}
+host    all       all       0.0.0.0/0     reject
+host    all       all       ::/0          reject

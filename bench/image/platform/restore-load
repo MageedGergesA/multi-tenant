@@ -1,0 +1,3 @@
+#!/bin/sh
+# DOC-04 one-shot: restore_load.py with the tenant config. Fixed template, no arguments.
+exec python3 /opt/platform/restore_load.py /run/tenant/odoo.conf

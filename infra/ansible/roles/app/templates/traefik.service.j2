@@ -1,0 +1,21 @@
+# {{ ansible_managed }}: infra/ansible role app. Traefik on the host network, outside the
+# userns remap (it binds 80/443 and reads root's 0600 router files): no capability but binding.
+[Unit]
+Description=Traefik (tenants' ingress)
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=simple
+ExecStartPre=-/usr/bin/docker rm -f traefik
+ExecStart=/usr/bin/docker run --rm --name traefik --pull never --network host --userns host \
+  --read-only --cap-drop ALL --cap-add NET_BIND_SERVICE --security-opt no-new-privileges \
+  --log-driver local \
+  -v /etc/traefik:/etc/traefik:ro -v /var/lib/traefik:/data \
+  {{ app_traefik_image }} --configFile=/etc/traefik/traefik.yml
+ExecStop=/usr/bin/docker stop traefik
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,30 @@
+# promtool test rules monitoring/rules/drills_test.yml
+rule_files:
+  - drills.yml
+evaluation_interval: 1m
+tests:
+  # Drilled at t=0: quiet at 29 days, firing past 30.
+  - interval: 1h
+    input_series:
+      - series: 'ctl_drill_last_pass_timestamp_seconds{tenant_id="t1",environment_id="e1"}'
+        values: '0+0x800'
+    alert_rule_test:
+      - eval_time: 29d
+        alertname: TenantNotDrilled
+        exp_alerts: []
+      - eval_time: 30d1h
+        alertname: TenantNotDrilled
+        exp_alerts:
+          - exp_labels: {severity: sev3, runbook: RB-04, tenant_id: t1, environment_id: e1}
+            exp_annotations:
+              summary: "Tenant not drilled in 30 days: tenant t1"
+              description: "Environment e1: no restore drill passed for 30d 1h 0m 0s."
+  # A drill passed on day 10 (value jumps to 864000 s): quiet on day 31.
+  - interval: 1d
+    input_series:
+      - series: 'ctl_drill_last_pass_timestamp_seconds{tenant_id="t1",environment_id="e1"}'
+        values: '0x9 864000+0x25'
+    alert_rule_test:
+      - eval_time: 31d
+        alertname: TenantNotDrilled
+        exp_alerts: []

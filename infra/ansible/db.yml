@@ -1,0 +1,11 @@
+---
+# db-1 (ADR-004, DOC-05): PostgreSQL 16 for the tenants and the host agent (role db).
+# The server is infra/tofu. A new host needs its enrollment opened on ctl-1 first (README).
+- name: Configure db-1
+  hosts: db
+  become: true
+  roles:
+    - base
+    - wireguard
+    - db_host
+    - agent

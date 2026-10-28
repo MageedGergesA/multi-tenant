@@ -1,0 +1,7 @@
+#!/bin/sh
+# print-report [odoo options]
+# DOC-05 §5 deep drill: print one PDF report in a restored copy. Run in the
+# copy's network namespace, so wkhtmltopdf loads assets from the running copy
+# at report.url (set by platform-defaults). Fixed template, no arguments.
+set -eu
+odoo shell --no-http --log-level=warn "$@" < /opt/platform/print_report.py | grep '^PRINT_REPORT '

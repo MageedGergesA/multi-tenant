@@ -1,0 +1,67 @@
+# {{ ansible_managed }}: infra/ansible role ctl. No secrets here: each *_file in
+# /run/ctl is written by ctl-secrets.service from /etc/ctl/secrets.sops.yaml.
+[database]
+url_file = "/run/ctl/database_url"
+migrations_dir = "{{ ctl_prefix }}/src/migrations"
+
+[dispatcher]
+signing_key_file = "/run/ctl/dispatch_seed"
+vault_identity_file = "/run/ctl/vault_identity"
+
+[agent_api]
+listen = "{{ ctl_wg_ip }}:{{ ctl_agent_api_port }}"
+cert_file = "/etc/ctl/ctl-1.pem"
+key_file = "/run/ctl/agent_tls_key"
+ca_file = "/etc/ctl/agents-ca.pem"
+{% if ctl_enrollment %}
+
+[enroll_api]
+listen = "{{ ctl_wg_ip }}:{{ ctl_enroll_api_port }}"
+cert_file = "/etc/ctl/ctl-1.pem"
+key_file = "/run/ctl/agent_tls_key"
+
+[enrollment]
+ca_cert_file = "/etc/ctl/agents-ca.pem"
+ca_key_file = "/run/ctl/agents_ca_key"
+{% endif %}
+
+[operator_api]
+listen = "{{ ctl_operator_api_listen }}"
+oidc_issuer = "{{ ctl_oidc_issuer }}"
+oidc_audience = "{{ ctl_oidc_audience }}"
+jwks_file = "/etc/ctl/jwks.json"
+
+[monitoring]
+listen = "{{ ctl_monitoring_listen }}"
+webhook_token_sha256 = "{{ ctl_monitoring_webhook_token_sha256 }}"
+
+[s3]
+endpoint = "{{ ctl_s3_endpoint }}"
+region = "{{ ctl_s3_region }}"
+
+[bucket_c]
+bucket = "{{ ctl_bucket_c }}"
+write_key_file = "/run/ctl/bucket_c_write.json"
+retention_key_file = "/run/ctl/bucket_c_retention.json"
+recovery_recipient = "{{ ctl_recovery_recipient }}"
+signing_key_file = "/run/ctl/dump_signing_seed"
+signing_public_keys = {{ ctl_dump_signing_public_keys | to_json }}
+
+[trust]
+release_public_key = "{{ ctl_trust.release_public_key }}"
+custodian_public_keys = {{ ctl_trust.custodian_public_keys | default([]) | to_json }}
+{% if ctl_trust.breakglass_public_key | default('') %}
+breakglass_public_key = "{{ ctl_trust.breakglass_public_key }}"
+{% endif %}
+{% for region in ctl_regions %}
+
+[[regions]]
+code = "{{ region.code }}"
+backup_recipient = "{{ region.backup_recipient }}"
+backup_bucket = "{{ region.backup_bucket }}"
+{% endfor %}
+
+[policy]
+breakglass_enabled = {{ ctl_policy.breakglass_enabled | lower }}
+backups_per_host = {{ ctl_policy.backups_per_host }}
+drills_per_day = {{ ctl_policy.drills_per_day }}

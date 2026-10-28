@@ -1,0 +1,31 @@
+# {{ ansible_managed }}: infra/ansible role agent (hostagent/exec_main.py)
+role = "{{ agent_role }}"
+socket = "/run/agent-exec/agent-exec.sock"
+owner_gid = {{ ansible_facts.getent_group['agent-exec'][1] }}
+{% if agent_role == 'app' %}
+owner_uid = {{ ansible_facts.getent_passwd['agent'][1] }}
+{% endif %}
+audit_log = "/var/log/agent-exec/audit.log"
+{% if agent_role == 'db' %}
+
+[db]
+hba_dir = "{{ agent_db_hba_dir }}"
+hba_method = "hostssl"
+{% endif %}
+{% if agent_role == 'app' %}
+
+[app]
+subuid_base = {{ agent_app_subuid_base }}
+registry_host = "{{ agent_registry_host }}"
+image_source = "{{ agent_app_image_source }}"
+db_host = "{{ agent_app_db_host }}"
+db_sslmode = "verify-full"
+db_ca = "/etc/platform/db-ca.pem"
+mail_host = "{{ agent_app_mail_host }}"
+resolver = "{{ agent_app_resolver }}"
+nft_mode = "nft"
+cert_resolver = "{{ agent_app_cert_resolver }}"
+
+[app.extra]
+repository = "{{ agent_app_repository }}"
+{% endif %}

@@ -1,0 +1,23 @@
+# {{ ansible_managed }}: infra/ansible role agent (hostagent/config.py)
+host_id = "{{ agent_host_id }}"
+role = "{{ agent_role }}"
+state_dir = "/var/lib/agent"
+registry_host = "{{ agent_registry_host }}"
+ctl_url = "https://{{ agent_ctl_wg_ip }}:{{ agent_ctl_api_port }}"
+enroll_url = "https://{{ agent_ctl_wg_ip }}:{{ agent_ctl_enroll_port }}"
+ctl_ca = "/etc/agent/ctl-ca.pem"
+tls_cert = "/var/lib/agent/tls.crt"
+tls_key = "/var/lib/agent/tls.key"
+trust_root = "{{ agent_trust_root }}"
+exec_socket = "/run/agent-exec/agent-exec.sock"
+workers = {{ agent_workers }}
+{% if agent_role == 'app' %}
+db_host = "{{ agent_app_db_host }}"
+mail_host = "{{ agent_app_mail_host }}"
+subuid_base = {{ agent_app_subuid_base }}
+ingress_url = "{{ agent_ingress_url }}"
+s3_endpoint = "{{ agent_s3_endpoint }}"
+s3_region = "{{ agent_s3_region }}"
+s3_bucket = "{{ agent_s3_bucket }}"
+backup_tmp = "/srv/backup-tmp"
+{% endif %}

@@ -1,0 +1,6 @@
+# Copy to terraform.tfvars (not committed). The state passphrase and the
+# token are environment variables: TF_VAR_state_passphrase, HCLOUD_TOKEN.
+location        = "fsn1"
+server_type     = "cx22"
+ssh_public_keys = { founder = "ssh-ed25519 AAAA... founder" }
+admin_cidrs     = ["203.0.113.7/32"] # the operator's address, for the first Ansible run; then []

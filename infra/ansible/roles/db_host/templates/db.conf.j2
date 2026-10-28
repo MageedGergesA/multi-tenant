@@ -1,0 +1,7 @@
+# {{ ansible_managed }}: infra/ansible role db_host
+listen_addresses = 'localhost,{{ db_host_private_ip }}'
+ssl = on
+ssl_cert_file = '/etc/postgresql/{{ db_host_pg_version }}/main/server.crt'
+ssl_key_file = '/etc/postgresql/{{ db_host_pg_version }}/main/server.key'
+ssl_min_protocol_version = 'TLSv1.2'
+password_encryption = 'scram-sha-256'

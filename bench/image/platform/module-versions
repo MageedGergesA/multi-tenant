@@ -1,0 +1,6 @@
+#!/bin/sh
+# module-versions [odoo options]
+# DOC-04 §5.4 `module_versions`: installed modules and versions as one JSON line.
+# An uninitialised database prints an empty map.
+set -eu
+odoo shell --no-http --log-level=warn "$@" < /opt/platform/module_versions.py | grep '^MODULE_VERSIONS '

@@ -1,0 +1,18 @@
+# {{ ansible_managed }}: infra/ansible role monitoring
+global:
+  scrape_interval: {{ monitoring_scrape_interval }}
+  evaluation_interval: {{ monitoring_evaluation_interval }}
+
+rule_files:
+  - /etc/prometheus/rules/ctl/*.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["{{ monitoring_alertmanager_listen }}"]
+
+scrape_configs:
+  # job "ctl": the name the rules select on (backups.yml CtlMetricsDown, workers.yml).
+  - job_name: ctl
+    static_configs:
+      - targets: ["{{ monitoring_ctl_metrics }}"]

@@ -1,0 +1,57 @@
+#!/usr/sbin/nft -f
+# {{ ansible_managed }}: infra/ansible role base. Inbound: WireGuard, ICMP;
+# SSH and ctl's agent-facing ports only on wg0; SSH from base_admin_cidrs while
+# bootstrapping. PostgreSQL, the operator API and monitoring listen on
+# loopback. Outbound is open (S3, apt, PyPI).
+# Replaces this table only, never `flush ruleset`: on an app host Docker keeps
+# its own tables (iptables-nft) and the agent one table per tenant.
+table inet filter
+delete table inet filter
+
+table inet filter {
+    chain input {
+        type filter hook input priority 0; policy drop;
+        iif "lo" accept
+        ct state established,related accept
+        ct state invalid drop
+        meta l4proto { icmp, ipv6-icmp } accept
+        udp dport {{ wireguard_port }} accept
+{% if base_public_tcp_ports %}
+        tcp dport { {{ base_public_tcp_ports | join(', ') }} } accept
+{% endif %}
+        iifname "wg0" tcp dport { {{ ([22] + base_wg_tcp_ports) | join(', ') }} } accept
+{% for rule in base_private_allow %}
+        ip saddr {{ rule.cidr }} tcp dport {{ rule.port }} accept
+{% endfor %}
+{% set v4 = base_admin_cidrs | reject('search', ':') | list %}
+{% set v6 = base_admin_cidrs | select('search', ':') | list %}
+{% if v4 %}
+        ip saddr { {{ v4 | join(', ') }} } tcp dport 22 accept
+{% endif %}
+{% if v6 %}
+        ip6 saddr { {{ v6 | join(', ') }} } tcp dport 22 accept
+{% endif %}
+    }
+
+    chain forward {
+        type filter hook forward priority 0; policy drop;
+{% if base_forward_docker %}
+        # Containers' traffic; each tenant's egress is its own table's (agent-exec, priority
+        # filter - 1), Docker's own FORWARD chain applies too.
+        iifname "docker0" accept
+        iifname "br-*" accept
+        oifname "docker0" ct state established,related accept
+        oifname "br-*" ct state established,related accept
+{% endif %}
+    }
+
+    chain output {
+        type filter hook output priority 0; policy accept;
+    }
+}
+{% if base_forward_docker %}
+
+# Each tenant's egress table (agent-exec writes them): loaded with this file, so at boot
+# before Docker and its containers start (Docker requires nftables.service).
+include "/etc/nftables.d/*.nft"
+{% endif %}

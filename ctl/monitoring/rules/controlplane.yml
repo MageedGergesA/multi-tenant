@@ -1,0 +1,29 @@
+# DOC-05 §2, §8 / DOC-07 RB-09, from ctl-1's /metrics (ctlplane/monitoring.py).
+# A broken audit chain opens its sev1 incident in ctl-1 directly (ctlplane/cpbackup.py).
+groups:
+  - name: controlplane
+    rules:
+      - alert: ControlPlaneDumpMissing
+        expr: time() - ctl_controlplane_dump_last_timestamp_seconds > 26 * 3600
+        labels:
+          severity: sev2
+          runbook: RB-10
+        annotations:
+          summary: "No control-plane dump in bucket C for 26 hours"
+          description: "The newest control-plane dump is {{ $value | humanizeDuration }} old."
+      - alert: AuditAnchorMissing
+        expr: time() - ctl_audit_anchor_last_timestamp_seconds > 26 * 3600
+        labels:
+          severity: sev1
+          runbook: RB-09
+        annotations:
+          summary: "No audit hash anchor in bucket C for 26 hours"
+          description: "The newest audit anchor is {{ $value | humanizeDuration }} old: investigate as a compromise."
+      - alert: ControlPlaneNotDrilled
+        expr: time() - (ctl_controlplane_drill_last_pass_timestamp_seconds > 0) > 92 * 86400
+        labels:
+          severity: sev3
+          runbook: RB-10
+        annotations:
+          summary: "Control-plane drill due: none passed in 92 days"
+          description: "The last control-plane drill passed {{ $value | humanizeDuration }} ago: restore the newest bucket C dump onto a temporary server."

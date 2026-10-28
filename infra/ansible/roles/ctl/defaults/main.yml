@@ -1,0 +1,38 @@
+---
+ctl_src: "{{ playbook_dir }}/../../ctl"   # this repository's ctl/, on the controller
+ctl_prefix: /opt/ctl
+ctl_sops_install: true
+ctl_sops_version: 3.13.3
+ctl_sops_sha256: e5bec3346a873ae91d871550f3e698c1aad962aff462a080e40f25fde17fef6b
+ctl_wg_ip: "{{ wireguard_address | split('/') | first }}"
+ctl_agent_api_port: 8443
+ctl_enroll_api_port: 8444
+ctl_enrollment: true
+ctl_operator_api_listen: 127.0.0.1:8080
+ctl_monitoring_listen: 127.0.0.1:9464
+ctl_s3_endpoint: ""
+ctl_s3_region: eu-central-003
+ctl_policy: {breakglass_enabled: false, backups_per_host: 2, drills_per_day: 1}
+# Required, no default: ctl_sops_file, ctl_tls_cert_file, ctl_agents_ca_cert_file, ctl_jwks_file,
+# ctl_oidc_issuer, ctl_oidc_audience, ctl_bucket_c, ctl_recovery_recipient.
+# The webhook token's hash: made on the host by the monitoring role.
+ctl_monitoring_webhook_token_sha256: "{{ monitoring_webhook_token_sha256 | default('') }}"
+# Keys the SOPS file must have (README "Bootstrap"); each becomes /run/ctl/<key>.
+ctl_secret_keys:
+  - database_url
+  - dispatch_seed
+  - vault_identity
+  - agent_tls_key
+  - agents_ca_key
+  - bucket_c_write.json
+  - bucket_c_retention.json
+  - dump_signing_seed
+# Public keys (base64) a dump may be signed by besides this host's own: the
+# previous ctl-1's, on a rebuilt one (from the IaC repo, never from the bucket).
+ctl_dump_signing_public_keys: []
+# Root public keys (base64 Ed25519) registered by `ctlplane bootstrap`: the release key is the
+# founder's hardware token, custodian and break-glass the backup custodian's (DOC-03 §12).
+# ctl_trust: {release_public_key: ..., custodian_public_keys: [...], breakglass_public_key: ...}
+ctl_trust: {}
+# [{code, backup_recipient (age, the region's operational key), backup_bucket (bucket A)}]
+ctl_regions: []

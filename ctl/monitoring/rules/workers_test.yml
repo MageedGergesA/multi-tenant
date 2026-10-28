@@ -1,0 +1,104 @@
+# promtool test rules monitoring/rules/workers_test.yml
+rule_files:
+  - workers.yml
+evaluation_interval: 1m
+tests:
+  # One instance leads, then loses the lock for good at 30 min: firing 10 min later, not before.
+  - interval: 1m
+    input_series:
+      - series: 'ctl_workers_leader{job="ctl",instance="ctl-1:9464"}'
+        values: '1x29 0x30'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: CtlWorkersNotRunning
+        exp_alerts: []
+      - eval_time: 38m
+        alertname: CtlWorkersNotRunning
+        exp_alerts: []
+      - eval_time: 41m
+        alertname: CtlWorkersNotRunning
+        exp_alerts:
+          - exp_labels: {severity: sev2, runbook: RB-16, job: ctl}
+            exp_annotations:
+              summary: "ctl-1 workers not running for 10 min"
+              description: "No ctl instance holds the workers lock: operations aren't reconciled, backups and drills aren't scheduled. Check the ctl logs (database connection) and RB-16 for stuck operations."
+  # A restart overlapping the old process: the new one takes over within minutes, nothing fires.
+  - interval: 1m
+    input_series:
+      - series: 'ctl_workers_leader{job="ctl",instance="old"}'
+        values: '1x9 0x30'
+      - series: 'ctl_workers_leader{job="ctl",instance="new"}'
+        values: '0x11 1x28'
+    alert_rule_test:
+      - eval_time: 11m
+        alertname: CtlWorkersNotRunning
+        exp_alerts: []
+      - eval_time: 30m
+        alertname: CtlWorkersNotRunning
+        exp_alerts: []
+      - eval_time: 30m
+        alertname: CtlWorkersTwice
+        exp_alerts: []
+  # Both report the lock for good: CtlWorkersTwice after 5 min.
+  - interval: 1m
+    input_series:
+      - series: 'ctl_workers_leader{job="ctl",instance="a"}'
+        values: '1x20'
+      - series: 'ctl_workers_leader{job="ctl",instance="b"}'
+        values: '1x20'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: CtlWorkersTwice
+        exp_alerts: []
+      - eval_time: 6m
+        alertname: CtlWorkersTwice
+        exp_alerts:
+          - exp_labels: {severity: sev2, runbook: RB-16, job: ctl}
+            exp_annotations:
+              summary: "Two ctl instances run the workers"
+              description: "2 instances report the workers lock for 5 min; it allows one. Stop all but one ctl."
+  # A 5-minute worker that last succeeded at 0: quiet at 14 min, firing past 15. An hourly one: 3 h.
+  - interval: 1m
+    input_series:
+      - series: 'ctl_worker_last_success_timestamp_seconds{job="ctl",worker="drills"}'
+        values: '0x300'
+      - series: 'ctl_worker_interval_seconds{job="ctl",worker="drills"}'
+        values: '300x300'
+      - series: 'ctl_worker_last_success_timestamp_seconds{job="ctl",worker="retention"}'
+        values: '0x300'
+      - series: 'ctl_worker_interval_seconds{job="ctl",worker="retention"}'
+        values: '3600x300'
+      # Healthy but two minutes behind: inside the 15-minute floor, though past 3 × 5 s.
+      - series: 'ctl_worker_last_success_timestamp_seconds{job="ctl",worker="reconciler"}'
+        values: '-120+60x300'
+      - series: 'ctl_worker_interval_seconds{job="ctl",worker="reconciler"}'
+        values: '5x300'
+    alert_rule_test:
+      - eval_time: 14m
+        alertname: CtlWorkerFailing
+        exp_alerts: []
+      - eval_time: 16m
+        alertname: CtlWorkerFailing
+        exp_alerts:
+          - exp_labels: {severity: sev2, runbook: RB-16, job: ctl, worker: drills}
+            exp_annotations:
+              summary: "ctl-1 worker drills keeps failing"
+              description: "No run of drills has succeeded for 16m 0s: see the ctl log for its traceback."
+      - eval_time: 181m
+        alertname: CtlWorkerFailing
+        exp_alerts:
+          - exp_labels: {severity: sev2, runbook: RB-16, job: ctl, worker: drills}
+            exp_annotations:
+              summary: "ctl-1 worker drills keeps failing"
+              description: "No run of drills has succeeded for 3h 1m 0s: see the ctl log for its traceback."
+          - exp_labels: {severity: sev2, runbook: RB-16, job: ctl, worker: retention}
+            exp_annotations:
+              summary: "ctl-1 worker retention keeps failing"
+              description: "No run of retention has succeeded for 3h 1m 0s: see the ctl log for its traceback."
+      - eval_time: 179m
+        alertname: CtlWorkerFailing
+        exp_alerts:
+          - exp_labels: {severity: sev2, runbook: RB-16, job: ctl, worker: drills}
+            exp_annotations:
+              summary: "ctl-1 worker drills keeps failing"
+              description: "No run of drills has succeeded for 2h 59m 0s: see the ctl log for its traceback."

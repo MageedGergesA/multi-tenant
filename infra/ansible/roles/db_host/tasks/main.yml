@@ -1,0 +1,77 @@
+---
+- name: The private address is required
+  ansible.builtin.assert:
+    that: db_host_private_ip is defined and db_host_private_ip | length > 0
+    fail_msg: db_host_private_ip is required
+    quiet: true
+
+- name: Install PostgreSQL {{ db_host_pg_version }}
+  ansible.builtin.apt:
+    name: ["postgresql-{{ db_host_pg_version }}", "postgresql-client-{{ db_host_pg_version }}"]
+
+# TLS for the private network (it isn't encrypted, ADR-003): the key is made here and never leaves the
+# host; app hosts pin this certificate (verify-full against the private IP).
+- name: Server key and certificate
+  ansible.builtin.command:
+    cmd: >-
+      openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes
+      -keyout /etc/postgresql/{{ db_host_pg_version }}/main/server.key
+      -out /etc/postgresql/{{ db_host_pg_version }}/main/server.crt
+      -subj /CN={{ inventory_hostname }} -days {{ db_host_cert_days }}
+      -addext subjectAltName=IP:{{ db_host_private_ip }}
+    creates: "/etc/postgresql/{{ db_host_pg_version }}/main/server.key"
+  notify: Restart postgresql
+
+- name: The key is postgres's only
+  ansible.builtin.file:
+    path: "/etc/postgresql/{{ db_host_pg_version }}/main/server.key"
+    owner: postgres
+    group: postgres
+    mode: "0600"
+
+- name: Listen on loopback and the private address, TLS, SCRAM
+  ansible.builtin.template:
+    src: db.conf.j2
+    dest: "/etc/postgresql/{{ db_host_pg_version }}/main/conf.d/db.conf"
+    owner: postgres
+    group: postgres
+    mode: "0644"
+  notify: Restart postgresql
+
+- name: The agent's pg_hba directory
+  ansible.builtin.file:
+    path: "{{ db_host_hba_dir }}"
+    state: directory
+    owner: postgres
+    group: postgres
+    mode: "0750"
+
+- name: Write pg_hba (the agent's files, then reject)
+  ansible.builtin.template:
+    src: pg_hba.conf.j2
+    dest: "/etc/postgresql/{{ db_host_pg_version }}/main/pg_hba.conf"
+    owner: postgres
+    group: postgres
+    mode: "0640"
+  notify: Reload postgresql
+
+- name: Run PostgreSQL
+  ansible.builtin.systemd_service:
+    name: postgresql
+    enabled: true
+    state: started
+
+- name: Apply configuration changes now
+  ansible.builtin.meta: flush_handlers
+
+- name: Read the certificate (app hosts pin it)
+  ansible.builtin.slurp:
+    src: "/etc/postgresql/{{ db_host_pg_version }}/main/server.crt"
+  register: db_host_server_cert
+
+# The app hosts' tenants verify this certificate (sslmode verify-full): app_db_ca_file.
+- name: The certificate, to the controller
+  ansible.builtin.fetch:
+    src: "/etc/postgresql/{{ db_host_pg_version }}/main/server.crt"
+    dest: "{{ playbook_dir }}/.build/{{ inventory_hostname }}.crt"
+    flat: true

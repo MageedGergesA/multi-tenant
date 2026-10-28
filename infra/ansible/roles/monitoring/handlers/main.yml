@@ -1,0 +1,15 @@
+---
+- name: Reload prometheus
+  ansible.builtin.systemd_service:
+    name: prometheus
+    state: reloaded
+
+- name: Restart prometheus
+  ansible.builtin.systemd_service:
+    name: prometheus
+    state: restarted
+
+- name: Restart alertmanager
+  ansible.builtin.systemd_service:
+    name: prometheus-alertmanager
+    state: restarted

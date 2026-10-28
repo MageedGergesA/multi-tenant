@@ -1,0 +1,19 @@
+# {{ ansible_managed }}: infra/ansible role wireguard
+[Interface]
+Address = {{ wireguard_address }}
+ListenPort = {{ wireguard_port }}
+# The private key stays in its own file, not in this one.
+PostUp = wg set %i private-key /etc/wireguard/wg0.key
+{% for peer in wireguard_peers %}
+
+[Peer]
+# {{ peer.name }}
+PublicKey = {{ peer.public_key }}
+AllowedIPs = {{ peer.address }}/32
+{% if peer.endpoint is defined %}
+Endpoint = {{ peer.endpoint }}
+{% endif %}
+{% if peer.keepalive is defined %}
+PersistentKeepalive = {{ peer.keepalive }}
+{% endif %}
+{% endfor %}

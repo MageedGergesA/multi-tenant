@@ -1,0 +1,8 @@
+---
+# db-1 (ADR-004): PostgreSQL 16 for the tenants, on its private address. The agent
+# (role agent) adds one pg_hba file per tenant into db_host_hba_dir.
+db_host_pg_version: 16
+# Required: this host's private IP (Hetzner network), where app hosts connect.
+# db_host_private_ip: 10.0.0.3
+db_host_hba_dir: "/etc/postgresql/{{ db_host_pg_version }}/main/hba.d"
+db_host_cert_days: 3650            # renewal isn't built: re-run with the key removed to remake both

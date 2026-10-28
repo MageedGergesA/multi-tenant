@@ -1,0 +1,12 @@
+---
+# An app host (ADR-011, DOC-05 §6): the tenants' Odoo containers under Docker with userns-remap,
+# Traefik on 80/443, the filestore Volume, the host agent (role app). The server is infra/tofu.
+# Needs db-1's certificate (the db play fetches it) and an enrollment opened on ctl-1 (README).
+- name: Configure the app hosts
+  hosts: app
+  become: true
+  roles:
+    - base
+    - wireguard
+    - app
+    - agent

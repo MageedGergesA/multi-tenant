@@ -1,0 +1,13 @@
+# DOC-05 §5, §8 / DOC-07 RB-04, from ctl-1's /metrics (ctlplane/monitoring.py).
+# A failed drill opens its sev2 incident in ctl-1 directly (ctlplane/drills.py).
+groups:
+  - name: drills
+    rules:
+      - alert: TenantNotDrilled
+        expr: time() - ctl_drill_last_pass_timestamp_seconds > 30 * 86400
+        labels:
+          severity: sev3
+          runbook: RB-04
+        annotations:
+          summary: "Tenant not drilled in 30 days: tenant {{ $labels.tenant_id }}"
+          description: "Environment {{ $labels.environment_id }}: no restore drill passed for {{ $value | humanizeDuration }}."

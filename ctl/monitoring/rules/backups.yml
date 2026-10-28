@@ -1,0 +1,21 @@
+# DOC-05 §8 / DOC-07 RB-01, from ctl-1's /metrics (ctlplane/monitoring.py).
+groups:
+  - name: backups
+    rules:
+      - alert: NoRecoverableDailyBackup
+        expr: time() - ctl_backup_last_recoverable_timestamp_seconds > 26 * 3600
+        labels:
+          severity: sev2
+          runbook: RB-01
+        annotations:
+          summary: "No recoverable daily backup for 26 h: tenant {{ $labels.tenant_id }}"
+          description: "Environment {{ $labels.environment_id }}: newest recoverable backup snapshot is {{ $value | humanizeDuration }} old. DR-06 refuses module updates, relocations and deletes until one exists."
+      # Without ctl-1's metrics there are no series and the rule above can't fire.
+      - alert: CtlMetricsDown
+        expr: up{job="ctl"} == 0 or absent(up{job="ctl"})
+        for: 10m
+        labels:
+          severity: sev2
+          runbook: RB-01
+        annotations:
+          summary: "ctl-1 metrics not scraped for 10 min: backup age alerts are blind"

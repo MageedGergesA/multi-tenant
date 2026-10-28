@@ -1,0 +1,200 @@
+---
+- name: Required variables
+  ansible.builtin.assert:
+    that:
+      - app_db_ca_file | default('') | length > 0
+      - app_filestore_on_root_disk | bool or (app_filestore_device | default('') | length > 0)
+      - not app_cert_resolver or app_acme_email | length > 0
+    fail_msg: app_db_ca_file, app_filestore_device and (with app_cert_resolver) app_acme_email are required
+    quiet: true
+
+# -- the filestore (DOC-05 §6.2): the Volume at /srv/tenants, before anything writes there --------
+
+- name: The filestore Volume
+  when: not app_filestore_on_root_disk | bool
+  block:
+    - name: Its filesystem
+      ansible.builtin.command: blkid -o value -s TYPE {{ app_filestore_device }}
+      register: app_filestore_fs
+      changed_when: false
+      failed_when: false
+
+    # Never formatted here: a replacement host re-attaches a Volume holding tenants' files.
+    - name: It is ext4
+      ansible.builtin.assert:
+        that: app_filestore_fs.stdout | trim == 'ext4'
+        fail_msg: >-
+          {{ app_filestore_device }} has no ext4 filesystem ({{ app_filestore_fs.stdout | default('') | trim or 'none' }}).
+          Hetzner formats a new Volume (tofu format = "ext4"); check the device before formatting it by hand.
+        quiet: true
+
+    - name: Mount unit
+      ansible.builtin.template:
+        src: srv-tenants.mount.j2
+        dest: /etc/systemd/system/srv-tenants.mount
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Mounted
+      ansible.builtin.systemd_service:
+        name: srv-tenants.mount
+        enabled: true
+        daemon_reload: true
+        state: started
+
+- name: Host directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "{{ item.mode }}"
+  loop:
+    - {path: /srv/tenants, mode: "0755"}
+    # Each tenant's 0711; agentd reads its archives inside (hostagent/backends.py _tmp).
+    - {path: /srv/backup-tmp, mode: "0711"}
+    - {path: /etc/nftables.d, mode: "0700"}
+    - {path: /etc/platform, mode: "0755"}
+    - {path: /etc/traefik, mode: "0755"}
+    - {path: /etc/traefik/dynamic, mode: "0700"}
+    - {path: /var/lib/traefik, mode: "0700"}
+
+- name: The tenants' libpq root certificate (db-1's, public)
+  ansible.builtin.copy:
+    src: "{{ app_db_ca_file }}"
+    dest: /etc/platform/db-ca.pem
+    owner: root
+    group: root
+    mode: "0644"
+
+# -- Docker with userns-remap (ADR-011) ---------------------------------------------------
+
+- name: The remap user
+  ansible.builtin.user:
+    name: dockremap
+    system: true
+    shell: /usr/sbin/nologin
+    create_home: false
+
+- name: Its subordinate ids (tenant uid N is host uid app_subuid_base + N)
+  ansible.builtin.lineinfile:
+    path: "{{ item }}"
+    regexp: '^dockremap:'
+    line: "dockremap:{{ app_subuid_base }}:65536"
+    create: true
+    owner: root
+    group: root
+    mode: "0644"
+  loop: [/etc/subuid, /etc/subgid]
+  notify: Restart docker
+
+- name: /etc/docker
+  ansible.builtin.file:
+    path: /etc/docker
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+# Before the package: its first start already remaps.
+- name: Docker daemon configuration
+  ansible.builtin.template:
+    src: daemon.json.j2
+    dest: /etc/docker/daemon.json
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart docker
+
+- name: Docker
+  ansible.builtin.apt:
+    name: [docker.io]
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: The docker unit's drop-in directory
+  ansible.builtin.file:
+    path: /etc/systemd/system/docker.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Docker waits for the filestore and the firewall
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/docker.service.d/filestore.conf
+    content: |
+      # Managed by Ansible: infra/ansible role app
+      [Unit]
+      RequiresMountsFor=/srv/tenants
+      # The tenants' egress tables load with the base firewall, before Docker. Wants, not Requires:
+      # restarting the firewall mustn't restart Docker and every tenant (Tenant.Start re-applies a
+      # tenant's table the kernel lacks).
+      Wants=nftables.service
+      After=nftables.service
+    owner: root
+    group: root
+    mode: "0644"
+  register: app_docker_dropin
+
+- name: Run Docker
+  ansible.builtin.systemd_service:
+    name: docker
+    enabled: true
+    daemon_reload: "{{ app_docker_dropin is changed }}"
+    state: started
+
+- name: Restart Docker now if its configuration changed
+  ansible.builtin.meta: flush_handlers
+
+- name: Docker remaps
+  ansible.builtin.command:
+    argv: [docker, info, --format, "{{ '{{json .SecurityOptions}}' }}"]
+  register: app_docker_security
+  changed_when: false
+  failed_when: "'name=userns' not in app_docker_security.stdout"
+
+# -- Traefik (host network: the agent's routers point at the tenants' loopback ports) -------
+
+- name: Traefik's image
+  ansible.builtin.command: docker pull {{ app_traefik_image }}
+  register: app_traefik_pull
+  changed_when: "'Downloaded newer image' in app_traefik_pull.stdout"
+
+- name: Traefik's static configuration
+  ansible.builtin.template:
+    src: traefik.yml.j2
+    dest: /etc/traefik/traefik.yml
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart traefik
+
+- name: Traefik's unit
+  ansible.builtin.template:
+    src: traefik.service.j2
+    dest: /etc/systemd/system/traefik.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart traefik
+
+- name: Run Traefik
+  ansible.builtin.systemd_service:
+    name: traefik
+    enabled: true
+    daemon_reload: true
+    state: started
+
+- name: Restart Traefik now if its configuration changed
+  ansible.builtin.meta: flush_handlers
+
+- name: Traefik answers
+  ansible.builtin.uri:
+    url: http://127.0.0.1:8082/ping
+  register: app_traefik_ping
+  until: app_traefik_ping.status == 200
+  retries: 30
+  delay: 2

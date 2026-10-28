@@ -1,0 +1,22 @@
+{
+  "_doc": "DOC-06 §2/§9 benchmark fleet. Hours are the planned campaign lengths; hosts are destroyed after each campaign.",
+  "location": "fsn1",
+  "image": "ubuntu-24.04",
+  "label": "bench=doc06",
+  "network_cidr": "10.60.0.0/16",
+  "servers": [
+    {"name": "bench-db-1",   "type": "ccx33", "hours": 120, "role": "db"},
+    {"name": "bench-app-s1", "type": "ccx23", "hours": 60,  "role": "app"},
+    {"name": "bench-app-s2", "type": "ccx23", "hours": 60,  "role": "app"},
+    {"name": "bench-app-s3", "type": "ccx23", "hours": 60,  "role": "app"},
+    {"name": "bench-app-l1", "type": "ccx33", "hours": 60,  "role": "app"},
+    {"name": "bench-app-l2", "type": "ccx33", "hours": 60,  "role": "app"},
+    {"name": "bench-app-l3", "type": "ccx33", "hours": 60,  "role": "app"},
+    {"name": "bench-load-1", "type": "cpx41", "hours": 120, "role": "load"},
+    {"name": "bench-mon-1",  "type": "cpx21", "hours": 120, "role": "monitor"}
+  ],
+  "volumes": [
+    {"name": "bench-filestore-1", "size_gb": 100, "server": "bench-app-s1", "hours": 60}
+  ],
+  "ssh_allow_cidrs": []
+}

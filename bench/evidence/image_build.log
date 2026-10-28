@@ -1,0 +1,49 @@
+#0 building with "desktop-linux" instance using docker driver
+
+#1 [internal] load build definition from Dockerfile
+#1 transferring dockerfile: 1.89kB done
+#1 DONE 0.0s
+
+#2 [internal] load metadata for docker.io/library/ubuntu:24.04
+#2 DONE 1.7s
+
+#3 [internal] load .dockerignore
+#3 transferring context: 2B done
+#3 DONE 0.0s
+
+#4 [1/6] FROM docker.io/library/ubuntu:24.04@sha256:68ee22004a9109b44973313b02ff7b1de250f1de0f5ecb628d73f579aaff33ac
+#4 resolve docker.io/library/ubuntu:24.04@sha256:68ee22004a9109b44973313b02ff7b1de250f1de0f5ecb628d73f579aaff33ac 0.0s done
+#4 DONE 0.0s
+
+#5 [2/6] RUN apt-get update && apt-get install -y --no-install-recommends         ca-certificates curl python3 python3-venv python3-dev build-essential         libpq-dev libldap2-dev libsasl2-dev libxml2-dev libxslt1-dev         libjpeg-dev zlib1g-dev libffi-dev postgresql-client         fonts-noto-core fonts-noto-cjk fontconfig xfonts-75dpi xfonts-base     && curl -fsSL -o /tmp/wkhtmltox.deb "https://github.com/wkhtmltopdf/packaging/releases/download/0.12.6.1-3/wkhtmltox_0.12.6.1-3.jammy_amd64.deb"     && if [ -n "" ]; then echo "  /tmp/wkhtmltox.deb" | sha256sum -c -; fi     && apt-get install -y --no-install-recommends /tmp/wkhtmltox.deb     && rm -rf /var/lib/apt/lists/* /tmp/wkhtmltox.deb
+#5 CACHED
+
+#6 [3/6] RUN test -n "faee5d8654738da089d0a0b61b1784675600295a"     && mkdir -p /opt/odoo     && curl -fsSL "https://github.com/odoo/odoo/archive/faee5d8654738da089d0a0b61b1784675600295a.tar.gz"        | tar -xz --strip-components=1 -C /opt/odoo
+#6 CACHED
+
+#7 [4/6] RUN python3 -m venv /opt/venv     && /opt/venv/bin/pip install --no-cache-dir -r /opt/odoo/requirements.txt     && /opt/venv/bin/pip install --no-cache-dir -e /opt/odoo --no-deps
+#7 CACHED
+
+#8 [internal] load build context
+#8 transferring context: 1.80kB done
+#8 DONE 0.0s
+
+#9 [5/6] COPY platform/ /opt/platform/
+#9 DONE 0.0s
+
+#10 [6/6] RUN mkdir -p /var/lib/odoo && chmod 1777 /var/lib/odoo
+#10 DONE 0.3s
+
+#11 exporting to image
+#11 exporting layers 0.1s done
+#11 exporting manifest sha256:e0f0192525d4aff6a557da09cb6b719eaa4a048c379045952da4e73a54468db2 0.0s done
+#11 exporting config sha256:0c20e8e67ea375df06d38e4a28ac027d352cb91327235cd3d8409b37e5be6e88 done
+#11 exporting attestation manifest sha256:a0379d3bc4f77e0f9b4a6e834f64f513c0413ac6a5323ce184d409cfe2bdec03 0.0s done
+#11 exporting manifest list sha256:2d9623a0469012a0c327d5a891606008c1bf99375843e61f740d65281b514ab0
+#11 exporting manifest list sha256:2d9623a0469012a0c327d5a891606008c1bf99375843e61f740d65281b514ab0 done
+#11 naming to docker.io/bench/odoo:19.0-faee5d865473 done
+#11 unpacking to docker.io/bench/odoo:19.0-faee5d865473 0.0s done
+#11 DONE 0.2s
+
+View build details: docker-desktop://dashboard/build/desktop-linux/desktop-linux/hrpq0tvt9ovbkuweygo1ir443
+bench/odoo:19.0-faee5d865473

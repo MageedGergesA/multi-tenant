@@ -1,0 +1,55 @@
+---
+- name: Install PostgreSQL {{ postgresql_version }}
+  ansible.builtin.apt:
+    name:
+      - "postgresql-{{ postgresql_version }}"
+      - "postgresql-client-{{ postgresql_version }}"
+
+- name: Loopback only, SCRAM
+  ansible.builtin.template:
+    src: ctl.conf.j2
+    dest: "/etc/postgresql/{{ postgresql_version }}/main/conf.d/ctl.conf"
+    owner: postgres
+    group: postgres
+    mode: "0644"
+  notify: Restart postgresql
+
+- name: Who may connect
+  ansible.builtin.template:
+    src: pg_hba.conf.j2
+    dest: "/etc/postgresql/{{ postgresql_version }}/main/pg_hba.conf"
+    owner: postgres
+    group: postgres
+    mode: "0640"
+  notify: Reload postgresql
+
+- name: Start PostgreSQL
+  ansible.builtin.systemd_service:
+    name: postgresql
+    enabled: true
+    state: started
+
+- name: Apply configuration changes before using the database
+  ansible.builtin.meta: flush_handlers
+
+# The migrations create ctl_app and ctl_dispatcher (DOC-03 §0), so the owner
+# needs CREATEROLE, and createrole_self_grant so that it may SET ROLE to them
+# (PG 16 grants a role's creator only ADMIN otherwise). Its password is set
+# from the SOPS file by the ctl role.
+- name: The owner role and the database
+  ansible.builtin.command:
+    cmd: psql -X -q -t -A -v ON_ERROR_STOP=1 -d postgres
+    stdin: |
+      SELECT 'created role' WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '{{ postgresql_ctl_owner }}');
+      SELECT 'CREATE ROLE {{ postgresql_ctl_owner }} LOGIN CREATEROLE'
+        WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '{{ postgresql_ctl_owner }}') \gexec
+      SELECT 'set self-grant' WHERE NOT EXISTS (SELECT FROM pg_db_role_setting s JOIN pg_roles r ON r.oid = s.setrole
+        WHERE r.rolname = '{{ postgresql_ctl_owner }}' AND 'createrole_self_grant=set, inherit' = ANY(s.setconfig));
+      ALTER ROLE {{ postgresql_ctl_owner }} SET createrole_self_grant = 'set, inherit';
+      SELECT 'created database' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = '{{ postgresql_ctl_db }}');
+      SELECT 'CREATE DATABASE {{ postgresql_ctl_db }} OWNER {{ postgresql_ctl_owner }}'
+        WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = '{{ postgresql_ctl_db }}') \gexec
+  become: true
+  become_user: postgres
+  register: postgresql_owner
+  changed_when: postgresql_owner.stdout | trim | length > 0

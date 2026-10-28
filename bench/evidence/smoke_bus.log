@@ -1,0 +1,77 @@
+INSERT 0 1
+[2026-10-25 00:04:50,159] mageed-Latitude-5501/INFO/locust.main: Starting Locust 2.46.0
+[2026-10-25 00:04:50,184] mageed-Latitude-5501/INFO/locust.main: Run time limit set to 240 seconds
+[2026-10-25 00:04:50,185] mageed-Latitude-5501/INFO/locust.runners: Ramping to 12 users at a rate of 2.00 per second
+[2026-10-25 00:04:55,192] mageed-Latitude-5501/INFO/locust.runners: All users spawned: {"Accounting": 3, "Admin": 1, "Manager": 1, "Sales": 4, "Warehouse": 3} (12 total users)
+[2026-10-25 00:08:49,748] mageed-Latitude-5501/INFO/locust.main: --run-time limit reached, shutting down
+[2026-10-25 00:08:49,795] mageed-Latitude-5501/INFO/locust.main: Shutting down (exit code 0)
+Type     Name                                                                          # reqs      # fails |    Avg     Min     Max    Med |   req/s  failures/s
+--------|----------------------------------------------------------------------------|-------|-------------|-------|-------|-------|-------|--------|-----------
+POST     heavy:import 100 lines                                                            26     0(0.00%) |     39       7     186      9 |    0.11        0.00
+POST     heavy:import create                                                               26     0(0.00%) |     45       8     207     19 |    0.11        0.00
+POST     heavy:invoice graph 12m                                                           68     0(0.00%) |    158       6    1758     10 |    0.28        0.00
+GET      heavy:invoice pdf x10                                                             16     0(0.00%) |   3162    2957    3804   3100 |    0.07        0.00
+POST     heavy:receivable group                                                            35     0(0.00%) |    188      10    2810     13 |    0.15        0.00
+POST     heavy:sales pivot 12m                                                             58     0(0.00%) |     74      12    1151     18 |    0.24        0.00
+GET      pdf:invoice single                                                                39     0(0.00%) |   2364    2206    4004   2300 |    0.16        0.00
+POST     read:account.move list                                                           143     0(0.00%) |     82      12    1664     16 |    0.60        0.00
+POST     read:partner search                                                              168     0(0.00%) |    104      14    1528     20 |    0.70        0.00
+POST     read:product search                                                               95     0(0.00%) |    143      17    2227     25 |    0.40        0.00
+POST     read:sale.order list                                                             160     0(0.00%) |    177      12    2799     18 |    0.67        0.00
+POST     read:stock.quant list                                                            120     0(0.00%) |    184      18    2149     26 |    0.50        0.00
+POST     setup                                                                            121     0(0.00%) |    579       6    4109     94 |    0.50        0.00
+POST     setup:login                                                                       12     0(0.00%) |   2501     730    4409   1400 |    0.05        0.00
+POST     write:attachment create                                                           39     0(0.00%) |     81      12    1532     25 |    0.16        0.00
+POST     write:invoice post                                                                55     0(0.00%) |    195     142     459    170 |    0.23        0.00
+POST     write:invoice save                                                                55     0(0.00%) |    371     191    1764    230 |    0.23        0.00
+POST     write:message_post                                                                78     0(0.00%) |     91      18    1151     27 |    0.33        0.00
+POST     write:message_post attachment                                                     39     0(0.00%) |     56      20     293     25 |    0.16        0.00
+POST     write:payment create                                                              54     0(0.00%) |    355     266     767    340 |    0.23        0.00
+POST     write:payment register                                                            55     0(0.00%) |     72      25     787     36 |    0.23        0.00
+POST     write:receipt confirm                                                             73     0(0.00%) |    107      55     773     81 |    0.30        0.00
+POST     write:receipt save                                                                73     0(0.00%) |    103      45     425     68 |    0.30        0.00
+POST     write:receipt validate                                                            73     0(0.00%) |    202      69     812    170 |    0.30        0.00
+POST     write:sale.order confirm                                                          78     0(0.00%) |    270     126    1547    210 |    0.33        0.00
+POST     write:sale.order onchange                                                         78     0(0.00%) |     84      15    1335     21 |    0.33        0.00
+POST     write:sale.order save                                                             78     0(0.00%) |    180      91    1669    110 |    0.33        0.00
+--------|----------------------------------------------------------------------------|-------|-------------|-------|-------|-------|-------|--------|-----------
+         Aggregated                                                                      1915     0(0.00%) |    260       6    4409     55 |    7.99        0.00
+
+Response time percentiles (approximated)
+Type     Name                                                                                  50%    66%    75%    80%    90%    95%    98%    99%  99.9% 99.99%   100% # reqs
+--------|--------------------------------------------------------------------------------|--------|------|------|------|------|------|------|------|------|------|------|------
+POST     heavy:import 100 lines                                                                  9     12     20     29    180    190    190    190    190    190    190     26
+POST     heavy:import create                                                                    20     27     58     71    170    200    210    210    210    210    210     26
+POST     heavy:invoice graph 12m                                                                10     26     94    130    500   1500   1600   1800   1800   1800   1800     68
+GET      heavy:invoice pdf x10                                                                3100   3200   3200   3200   3400   3800   3800   3800   3800   3800   3800     16
+POST     heavy:receivable group                                                                 13     30     64    140    290   1500   2800   2800   2800   2800   2800     35
+POST     heavy:sales pivot 12m                                                                  18     23     58     76    150    280    620   1200   1200   1200   1200     58
+GET      pdf:invoice single                                                                   2300   2300   2300   2300   2600   3700   4000   4000   4000   4000   4000     39
+POST     read:account.move list                                                                 16     18     26     42    150    340   1100   1500   1700   1700   1700    143
+POST     read:partner search                                                                    20     27     52     66    250    730   1100   1200   1500   1500   1500    168
+POST     read:product search                                                                    25     36     62     89    300    810   1900   2200   2200   2200   2200     95
+POST     read:sale.order list                                                                   18     28    100    140    500   1300   1800   1900   2800   2800   2800    160
+POST     read:stock.quant list                                                                  26     36     84    140    420   1400   1800   1800   2100   2100   2100    120
+POST     setup                                                                                  94    140    430    950   2300   3400   4100   4100   4100   4100   4100    121
+POST     setup:login                                                                          3600   3600   4000   4000   4100   4400   4400   4400   4400   4400   4400     12
+POST     write:attachment create                                                                25     31     47     62    140    250   1500   1500   1500   1500   1500     39
+POST     write:invoice post                                                                    170    190    200    210    280    360    390    460    460    460    460     55
+POST     write:invoice save                                                                    230    250    300    320    850   1400   1600   1800   1800   1800   1800     55
+POST     write:message_post                                                                     27     37     62    130    240    480    540   1200   1200   1200   1200     78
+POST     write:message_post attachment                                                          25     28     33     54    230    250    290    290    290    290    290     39
+POST     write:payment create                                                                  340    360    400    410    440    490    540    770    770    770    770     54
+POST     write:payment register                                                                 36     49     57     75    170    200    280    790    790    790    790     55
+POST     write:receipt confirm                                                                  81    100    120    130    140    200    350    770    770    770    770     73
+POST     write:receipt save                                                                     68     84     99    130    240    270    390    430    430    430    430     73
+POST     write:receipt validate                                                                170    200    220    240    360    490    610    810    810    810    810     73
+POST     write:sale.order confirm                                                              210    230    250    270    430    800   1400   1500   1500   1500   1500     78
+POST     write:sale.order onchange                                                              22     40     65     75    200    370    800   1300   1300   1300   1300     78
+POST     write:sale.order save                                                                 110    130    140    150    320    560   1000   1700   1700   1700   1700     78
+--------|--------------------------------------------------------------------------------|--------|------|------|------|------|------|------|------|------|------|------|------
+         Aggregated                                                                             55    130    190    230    500   1600   2800   3200   4100   4400   4400   1915
+
+{"sent": 81, "received": 81, "lost": 0, "p95": 1.437, "p99": 2.203, "pass": true}
+{
+  "test_id": "SMOKE-XS-w2c1-bus",
+  "pass": false
+}

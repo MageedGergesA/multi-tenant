@@ -1,0 +1,75 @@
+---
+# Copy to inventory.yml. After the first run, reach ctl-1 over WireGuard
+# (ansible_host: 10.8.0.1) and empty base_admin_cidrs here and admin_cidrs in infra/tofu.
+ctl:
+  hosts:
+    ctl-1:
+      ansible_host: 203.0.113.10          # tofu output ctl_public_ipv4, for the first run
+      ansible_user: root
+  vars:
+    base_admin_cidrs: ["203.0.113.7/32"]       # the operator's address, while bootstrapping
+    wireguard_peers:
+      - {name: founder, public_key: "AAAA...=", address: 10.8.0.10}
+      - {name: app-1, public_key: "BBBB...=", address: 10.8.0.21}
+    ctl_sops_file: "{{ inventory_dir }}/secrets/ctl.sops.yaml"
+    ctl_tls_cert_file: "{{ inventory_dir }}/pki/ctl-1.pem"
+    ctl_agents_ca_cert_file: "{{ inventory_dir }}/pki/agents-ca.pem"
+    ctl_jwks_file: "{{ inventory_dir }}/oidc/jwks.json"
+    ctl_oidc_issuer: https://id.example
+    ctl_oidc_audience: ctl-1
+    # monitoring_deadman_url: https://hc-ping.com/<uuid>   # RB-25 heartbeat (recommended)
+    ctl_s3_endpoint: https://s3.eu-central-003.backblazeb2.com
+    ctl_s3_region: eu-central-003
+    ctl_bucket_c: teklines-ctl-c
+    ctl_recovery_recipient: age1...
+    ctl_trust:
+      release_public_key: "<base64 Ed25519, the founder's release key>"
+      custodian_public_keys: ["<base64 Ed25519, the backup custodian's key>"]
+    ctl_regions:
+      - {code: eu-de-fsn1, backup_recipient: age1..., backup_bucket: teklines-tenants-fsn1}
+
+db:
+  hosts:
+    db-1:
+      ansible_host: 203.0.113.11
+      ansible_user: root
+  vars:
+    base_admin_cidrs: ["203.0.113.7/32"]
+    base_wg_tcp_ports: []                 # agents open no port
+    base_private_allow: [{port: 5432, cidr: 10.0.0.16/28}]   # the app hosts' range
+    wireguard_address: 10.8.0.3/24
+    wireguard_peers:
+      - {name: ctl-1, public_key: "<ctl-1's WireGuard public key>", address: 10.8.0.1,
+         endpoint: "203.0.113.10:51820", keepalive: 25}
+    db_host_private_ip: 10.0.0.3
+    agent_role: db
+    agent_host_id: "<from ctl-1: POST /v1/hosts>"
+    agent_trust_root: "<base64 release public key, as ctl_trust.release_public_key>"
+    agent_ctl_ca_file: "{{ inventory_dir }}/pki/agents-ca.pem"
+    # agent_enroll_token_file: "{{ inventory_dir }}/secrets/db-1.token"   # first run only
+
+app:
+  hosts:
+    app-1:
+      ansible_host: 203.0.113.12          # tofu output app_hosts["app-1"].public_ipv4
+      ansible_user: root
+      wireguard_address: 10.8.0.21/24
+      app_filestore_device: /dev/disk/by-id/scsi-0HC_Volume_<app_hosts["app-1"].filestore_volume_id>
+      agent_host_id: "<from ctl-1: POST /v1/hosts>"
+      # agent_enroll_token_file: "{{ inventory_dir }}/secrets/app-1.token"   # first run only
+  vars:
+    base_admin_cidrs: ["203.0.113.7/32"]
+    base_wg_tcp_ports: []
+    base_public_tcp_ports: [80, 443]      # Traefik
+    base_forward_docker: true
+    wireguard_peers:
+      - {name: ctl-1, public_key: "<ctl-1's WireGuard public key>", address: 10.8.0.1,
+         endpoint: "203.0.113.10:51820", keepalive: 25}
+    app_db_ca_file: "{{ playbook_dir }}/.build/db-1.crt"    # written by the db play
+    app_acme_email: ops@example.com
+    agent_role: app
+    agent_app_db_host: 10.0.0.3
+    agent_s3_endpoint: https://s3.eu-central-003.backblazeb2.com
+    agent_s3_bucket: teklines-tenants-fsn1
+    agent_trust_root: "<base64 release public key, as ctl_trust.release_public_key>"
+    agent_ctl_ca_file: "{{ inventory_dir }}/pki/agents-ca.pem"

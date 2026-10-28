@@ -1,0 +1,6 @@
+# {{ ansible_managed }}: infra/ansible role postgresql
+# TYPE  DATABASE        USER            ADDRESS         METHOD
+local   all             postgres                        peer
+host    {{ postgresql_ctl_db }}    {{ postgresql_ctl_owner }}    127.0.0.1/32    scram-sha-256
+host    {{ postgresql_ctl_db }}    {{ postgresql_ctl_owner }}    ::1/128         scram-sha-256
+# rebuild (RB-09/RB-10) restores as a superuser: give one a password for that day only.

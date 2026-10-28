@@ -1,0 +1,33 @@
+# ctl-1's workers (ctlplane/main.py): they run only in the process holding the
+# workers lock. `ctl_workers_leader` is per process, so the rules sum over the
+# scraped instances of job "ctl". CtlMetricsDown (backups.yml) covers no scrape.
+groups:
+  - name: workers
+    rules:
+      - alert: CtlWorkersNotRunning
+        expr: sum by (job) (ctl_workers_leader{job="ctl"}) == 0
+        for: 10m
+        labels:
+          severity: sev2
+          runbook: RB-16
+        annotations:
+          summary: "ctl-1 workers not running for 10 min"
+          description: "No ctl instance holds the workers lock: operations aren't reconciled, backups and drills aren't scheduled. Check the ctl logs (database connection) and RB-16 for stuck operations."
+      - alert: CtlWorkersTwice
+        expr: sum by (job) (ctl_workers_leader{job="ctl"}) > 1
+        for: 5m
+        labels:
+          severity: sev2
+          runbook: RB-16
+        annotations:
+          summary: "Two ctl instances run the workers"
+          description: "{{ $value }} instances report the workers lock for 5 min; it allows one. Stop all but one ctl."
+      # Only the instance holding the lock reports these; a term starts as a success.
+      - alert: CtlWorkerFailing
+        expr: time() - ctl_worker_last_success_timestamp_seconds{job="ctl"} > clamp_min(3 * ctl_worker_interval_seconds{job="ctl"}, 900)
+        labels:
+          severity: sev2
+          runbook: RB-16
+        annotations:
+          summary: "ctl-1 worker {{ $labels.worker }} keeps failing"
+          description: "No run of {{ $labels.worker }} has succeeded for {{ $value | humanizeDuration }}: see the ctl log for its traceback."

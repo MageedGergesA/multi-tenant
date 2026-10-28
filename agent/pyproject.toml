@@ -1,0 +1,17 @@
+[project]
+name = "hostagent"
+version = "0.1.0"
+description = "Odoo Cloud Platform host agent (DOC-04)"
+requires-python = ">=3.12"
+dependencies = ["pynacl", "jsonschema", "rfc8785", "docker", "psycopg[binary]", "cryptography", "pyrage",
+                "boto3"]
+
+# Only the package: setuptools would otherwise pick up dev/ and tests/ too.
+[tool.setuptools]
+packages = ["hostagent"]
+
+[project.optional-dependencies]
+test = ["pytest"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

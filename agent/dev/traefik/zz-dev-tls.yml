@@ -1,0 +1,7 @@
+# Copied next to the tenant routes (`.yml`: the agent only reads `*.yaml`).
+tls:
+  stores:
+    default:
+      defaultCertificate:
+        certFile: /certs/wildcard.pem
+        keyFile: /certs/wildcard.key

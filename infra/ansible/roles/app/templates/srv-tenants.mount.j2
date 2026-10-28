@@ -1,0 +1,12 @@
+# {{ ansible_managed }}: infra/ansible role app. The tenants' filestore Volume (DOC-05 §6.2).
+[Unit]
+Description=tenants' filestore
+
+[Mount]
+What={{ app_filestore_device }}
+Where=/srv/tenants
+Type=ext4
+Options=defaults,nodev,nosuid,noexec
+
+[Install]
+WantedBy=multi-user.target

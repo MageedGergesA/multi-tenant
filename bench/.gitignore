@@ -1,0 +1,5 @@
+load/.venv/
+evidence/datasets/
+evidence/runs/*/raw/filestore/
+**/users.csv
+__pycache__/
