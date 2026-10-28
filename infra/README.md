@@ -11,6 +11,7 @@ server: applying needs the owner's priced approval and `HCLOUD_TOKEN`.
 | `ansible/ctl.yml` | roles `base` (packages, SSH keys-only, nftables), `wireguard` (wg0 10.8.0.1/24, the host makes its own key, peers from `wireguard_peers`), `postgresql` (Ubuntu's PostgreSQL 16, loopback, SCRAM, `ctl_owner` + database `ctl`), `monitoring` (Ubuntu's Prometheus 2.45 and Alertmanager 0.26 on loopback, Alertmanager clustering off; ctl's rules from `ctl/monitoring/rules`, each `promtool`-checked; every alert to ctl's webhook as an incident; the webhook token made on the host, only its SHA-256 in `ctl.toml`; an always-firing `Watchdog` to `monitoring_deadman_url`), `ctl` (user, sops, the host's age key, the package in `/opt/ctl/venv`, `/etc/ctl/ctl.toml`, the units from `ctl/deploy/`, secrets, the owner's password, migrations, serve) |
 | `tofu/hosts.tf` | db-1 (fixed private IP 10.0.0.3; WireGuard and ICMP from outside), the app hosts (`app_hosts`; HTTP/HTTPS from anywhere), each with a delete-protected Hetzner Volume for the tenants' filestore (DOC-05 §6.2), attached unformatted-mount (the app play mounts it) |
 | `ansible/db.yml` | db-1: `base` (its PostgreSQL port admitted only from the app hosts' range, `base_private_allow`), `wireguard` (client of ctl-1: `endpoint`, `keepalive`), `db_host` (PostgreSQL 16 on loopback and the private IP, TLS with a key and certificate made on the host, `pg_hba` = postgres peer, the agent's `include_dir`, reject), `agent` |
+| `ansible/roles/pgbackrest` | L2 (DOC-05 §2, §3.1): Ubuntu's pgBackRest 2.50 to bucket B (S3 path-style, `aes-256-cbc` repository cipher, zstd, two full cycles). On db-1 (`mode: db`, in `db.yml`): WAL archiving (`archive_timeout` 60 s), the stanza, full Sunday 01:00 UTC and differential the other days, `check` every 2 minutes (a WAL switch, so an idle cluster still archives), with a key that can't delete and `expire-auto=n`; its config root:postgres 0640. On ctl-1 (`mode: ctl`, in `ctl.yml` when `ctl_l2_bucket` is set): config without secrets, for ctl's `l2` worker, which runs `info`, `repo-ls` and a daily `expire` with the delete key and cipher pass from SOPS (`l2_repo.json`, `l2_cipher_pass`) |
 | `ansible/app.yml` | an app host: `base` (80/443 open, `base_public_tcp_ports`; forwarding for Docker's bridges, `base_forward_docker`; the tenants' egress tables loaded with it), `wireguard`, `app` (the filestore Volume mounted at `/srv/tenants`, nodev/nosuid/noexec, never formatted: anything but ext4 stops the play; Ubuntu's `docker.io` with userns-remap, `dockremap` 100000:65536, published ports on 127.0.0.1, no inter-container traffic, live-restore, no-new-privileges, after the filestore and nftables (Wants, so a firewall restart doesn't restart Docker and every tenant); Traefik v3.7.14 by digest on the host network outside the remap, capabilities only `NET_BIND_SERVICE`, read-only, routers from `/etc/traefik/dynamic`, ACME HTTP-01; db-1's certificate as the tenants' libpq root), `agent` (role app: executor as root, `[app]` from `agent_app_*`) |
 | `ansible/roles/agent` | the host agent from `agent/` (reproducible bundle, `agent/requirements.lock`): `agent-exec` (as postgres on db-1, root on an app host; its socket 0660 in the `agent-exec` group it shares with agentd) and `agentd` (user `agent`, sandboxed, `ConditionPathExists` its key), configs in `/etc/agent`, state in `/var/lib/agent` (0700); enrollment with a one-time token, removed after |
 | `test/run.sh` | the playbook against a throwaway Ubuntu 24.04 container with systemd |
@@ -72,12 +73,17 @@ C first), ctl restarts.
    `agent_trust_root`, the release key), the token is removed, agentd starts
    polling. Without a token on a host not yet enrolled, the play stops and
    says this.
-4. An app host is the same with `app.yml` (`role: app`), after db-1's play:
+4. L2 needs bucket B made on B2 first (versioning on, a lifecycle rule keeping hidden
+   versions 14 days, DOC-05 §3.1) and two keys scoped to it: db-1's without
+   `deleteFiles` (`pgbackrest_db_key_file`), ctl-1's with it (SOPS `l2_repo.json`).
+   The cipher pass (`pgbackrest_cipher_pass_file`, SOPS `l2_cipher_pass`) goes into
+   the offline recovery set with the region keys: without it L2 is unreadable.
+5. An app host is the same with `app.yml` (`role: app`), after db-1's play:
    that play fetches db-1's certificate to `ansible/.build/db-1.crt`
    (`app_db_ca_file`). `app_filestore_device` is the Volume,
    `/dev/disk/by-id/scsi-0HC_Volume_<filestore_volume_id>`; `agent_registry_host`
    and `agent_app_repository` name where tenant images are pulled by digest.
-5. After an app host reboots, its tenants are stopped (restart policy `no`):
+6. After an app host reboots, its tenants are stopped (restart policy `no`):
    their `/run/tenants` files are on tmpfs, so each needs `Tenant.Start`, which
    brings them again (DOC-04 §5.2, DOC-07's "start the tenants").
 
@@ -118,6 +124,13 @@ loopback port (Docker Desktop's bridge isn't routable from the host), and
   and polling (mutual TLS over wg0), PostgreSQL on the private address with
   TLS, port 5432 closed to a private address outside the app range; a second
   run changes nothing;
+- L2: db-1 archives (`archive_mode` on, 60 s), its pgBackRest config
+  root:postgres 0640, the three timers enabled; a full backup through its unit;
+  a row written after it; the check unit; bucket B holds only ciphertext; the
+  latest backup restored from bucket B into an empty directory with WAL
+  replayed and started as a second cluster: the row is there, recovery done;
+  ctl-1's `l2` worker reads the full and the newest WAL time and has run
+  expire; Prometheus has the L2 rules;
 - app-1 (a third container, privileged for Docker inside): a device without
   ext4 stops the play; then configured and enrolled: nftables, Docker,
   Traefik, agent-exec and agentd active, Docker remapped (root dir
@@ -145,6 +158,9 @@ What a container can't show: WireGuard (no kernel module here; `wg0` is a
 dummy interface with ctl's address and `wireguard_start: false`), the real
 `sops` (a stand-in decrypts age-encrypted JSON with the host key: the same
 key handling, not the SOPS format; `ctl_sops_install: false`), and the
+B2's key capabilities (a key without `deleteFiles` only hides; LocalStack has
+no such keys, so db-1 and ctl-1 use the same one here) and the bucket's
+lifecycle rule, and the
 OpenTofu side, which is `tofu validate` and a `plan` with a dummy token only.
 The container runs with CAP_SYS_ADMIN and no AppArmor profile so systemd can
 remount its own cgroup namespace. No udev in a container either, so a mount
@@ -220,11 +236,26 @@ unit never sees its device: the Volume's mount runs only on a real host
       the SMTP mode (sink for restore copies) and the secrets from ctl-1, and
       the agent renders them before starting.
 
+16. L2 round (pgBackRest 2.50 from Ubuntu):
+    - **Ubuntu's package reads `/etc/pgbackrest.conf`** only when
+      `/etc/pgbackrest/pgbackrest.conf` is missing; the role writes the
+      latter and removes the package's sample.
+    - **pgBackRest talks to S3 over TLS only**: the harness uses LocalStack's
+      TLS on 4566 (`pgbackrest_s3_port`, verification off for the stand-in).
+    - **`stanza-create`'s "already exists" is an INFO line**, hidden at
+      `log-level-console=warn`: the role asks `info` instead, and creates the
+      stanza only when its status isn't 0, so a second run changes nothing.
+    - **A restored cluster takes connections before recovery ends** (hot
+      standby): the drill waits for `pg_is_in_recovery()` to turn false before
+      it reads, or it can read before the WAL with the probe row is replayed.
+
 ## Not built
 
 Notification beyond incidents (ADR-008's Telegram and email receivers;
 ctl's "paging on incidents"); starting an app host's tenants after a reboot
 by itself (now an operator's `Tenant.Start` each); the Volume's mount on a
-real host (no udev in the harness); pgBackRest (L2) on db-1; the git mirror and
+real host (no udev in the harness); the monthly L2 drill on a temporary server
+(scripted, DOC-05 §5; the harness does it on db-1); pgBackRest with B2 itself
+(DOC-05 VERIFY: path-style, `DeleteObject` without `deleteFiles`); the git mirror and
 off-site copy of this repository (DOC-05 §1); the operator console; real
 `sops` and WireGuard on a real server (first apply).

@@ -8,4 +8,7 @@
     - base
     - wireguard
     - db_host
+    - role: pgbackrest   # L2: WAL and the full/differential backups to bucket B (DOC-05 §2)
+      vars:
+        pgbackrest_mode: db
     - agent

@@ -107,20 +107,31 @@ bucket = 'ctl1-test-' + secrets.token_hex(4)
 boto3.client('s3', endpoint_url='http://127.0.0.1:4566', region_name='us-east-1', aws_access_key_id='test',
              aws_secret_access_key='test').create_bucket(Bucket=bucket, ObjectLockEnabledForBucket=True)
 key = {'key_id': 'test', 'secret': 'test'}
+# Bucket B (L2): versioned, as on B2. LocalStack can't show B2's key capabilities (no deleteFiles).
+l2_bucket = 'l2-test-' + secrets.token_hex(4)
+s3 = boto3.client('s3', endpoint_url='http://127.0.0.1:4566', region_name='us-east-1', aws_access_key_id='test',
+                  aws_secret_access_key='test')
+s3.create_bucket(Bucket=l2_bucket)
+s3.put_bucket_versioning(Bucket=l2_bucket, VersioningConfiguration={'Status': 'Enabled'})
+cipher_pass = secrets.token_urlsafe(32)
+open(work + '/l2_cipher_pass', 'w').write(cipher_pass)
+json.dump(key, open(work + '/l2_db_key.json', 'w'))
 plain = {'database_url': 'postgresql://ctl_owner:%s@127.0.0.1:5432/ctl' % secrets.token_urlsafe(24),
          'dispatch_seed': base64.b64encode(SigningKey.generate().encode()).decode(),
          'vault_identity': str(pyrage.x25519.Identity.generate()),
          'agent_tls_key': open(work + '/ctl.key').read(), 'agents_ca_key': open(work + '/ca.key').read(),
          'bucket_c_write.json': key, 'bucket_c_retention.json': key,
-         'dump_signing_seed': base64.b64encode(SigningKey.generate().encode()).decode()}
+         'dump_signing_seed': base64.b64encode(SigningKey.generate().encode()).decode(),
+         'l2_repo.json': key, 'l2_cipher_pass': cipher_pass}
 open(work + '/secrets.json', 'w').write(json.dumps(plain))
 # The first run's file: encrypted to the operators only, not yet to this new host.
 other = pyrage.x25519.Identity.generate().to_public()
 open(work + '/ctl.sops.yaml', 'wb').write(pyrage.encrypt(json.dumps(plain).encode(), [other]))
-json.dump({'bucket': bucket, 'recovery': str(recovery.to_public()),
+json.dump({'bucket': bucket, 'l2_bucket': l2_bucket, 'recovery': str(recovery.to_public()),
            'release': base64.b64encode(bytes(release.verify_key)).decode()}, open(work + '/vars.json', 'w'))
 PY
 BUCKET="$("$PY" -c "import json,sys; print(json.load(open(sys.argv[1]))['bucket'])" "$WORK/vars.json")"
+L2_BUCKET="$("$PY" -c "import json,sys; print(json.load(open(sys.argv[1]))['l2_bucket'])" "$WORK/vars.json")"
 RECOVERY="$("$PY" -c "import json,sys; print(json.load(open(sys.argv[1]))['recovery'])" "$WORK/vars.json")"
 RELEASE="$("$PY" -c "import json,sys; print(json.load(open(sys.argv[1]))['release'])" "$WORK/vars.json")"
 cat > "$WORK/inventory.yml" <<YAML
@@ -152,6 +163,11 @@ ctl:
     ctl_recovery_recipient: $RECOVERY
     ctl_trust: {release_public_key: "$RELEASE"}
     ctl_regions: [{code: test, backup_recipient: "$RECOVERY", backup_bucket: "$BUCKET"}]
+    ctl_l2_bucket: $L2_BUCKET
+    pgbackrest_s3_endpoint: $S3_IP
+    pgbackrest_s3_port: 4566
+    pgbackrest_s3_region: us-east-1
+    pgbackrest_s3_verify_tls: false
 YAML
 # A short TMPDIR: Ansible puts a Unix socket there (108-byte path limit).
 play() { TMPDIR=/tmp ansible-playbook -i "$WORK/inventory.yml" "$INFRA/ansible/ctl.yml" > "$WORK/play$1.log" 2>&1; }
@@ -283,6 +299,13 @@ db:
     wireguard_start: false
     wireguard_address: 10.8.0.3/24
     db_host_private_ip: 10.0.0.3
+    pgbackrest_bucket: $L2_BUCKET
+    pgbackrest_s3_endpoint: $S3_IP
+    pgbackrest_s3_port: 4566
+    pgbackrest_s3_region: us-east-1
+    pgbackrest_s3_verify_tls: false
+    pgbackrest_db_key_file: $WORK/l2_db_key.json
+    pgbackrest_cipher_pass_file: $WORK/l2_cipher_pass
     agent_role: db
     agent_host_id: "$DB_HOST_ID"
     agent_trust_root: "$RELEASE"
@@ -306,6 +329,51 @@ check "ctl-1 has db-1 active, its certificate pinned, polling now (mutual TLS ov
 check "PostgreSQL on the private address with TLS" sh -c "docker exec $DB runuser -u postgres -- psql -tAc 'SHOW ssl' | grep -qx on && docker exec $DB ss -ltnH 'sport = :5432' | grep -q '10.0.0.3:5432'"
 check "port 5432 closed to a private address outside the app range (ctl-1, 10.0.0.2)" \
     sh -c "! docker exec $NAME timeout 3 bash -c 'echo > /dev/tcp/10.0.0.3/5432'"
+echo "L2: pgBackRest on db-1 to bucket B, read and expired by ctl-1"
+check "db-1 archives WAL (archive_mode on, timeout 60 s)" \
+    test "$(in_db runuser -u postgres -- psql -tAc "SELECT current_setting('archive_mode') || ' ' || current_setting('archive_timeout')")" = "on 1min"
+check "pgBackRest's config on db-1: root:postgres 0640 (its key and the cipher pass)" \
+    test "$(in_db stat -c '%U:%G %a' /etc/pgbackrest/pgbackrest.conf)" = "root:postgres 640"
+for t in full diff check; do check "timer pgbackrest-$t enabled" in_db systemctl is-enabled -q "pgbackrest-$t.timer"; done
+if in_db systemctl start pgbackrest@full.service; then ok "a full backup through its unit"; else bad "a full backup through its unit"; in_db journalctl --no-pager -u pgbackrest@full | tail -20; fi
+# A row written after the backup: only WAL replay brings it back.
+in_db runuser -u postgres -- psql -q -c "CREATE TABLE l2_probe AS SELECT 'after-the-backup'::text AS v"
+check "the check unit (WAL switch, archive verified)" in_db systemctl start pgbackrest@check.service
+# DOC-05's L2 drill in small: restore the latest full from bucket B into an empty directory, replay
+# the WAL archive to its end, start a second cluster on it and read the row.
+{ in_db runuser -u postgres -- sh -c 'rm -rf /var/tmp/l2r && pgbackrest --stanza=main --pg1-path=/var/tmp/l2r restore' \
+  && printf "port = 5499\nlisten_addresses = ''\nunix_socket_directories = '/var/tmp'\narchive_mode = off\n" \
+     | docker exec -i -u postgres "$DB" sh -c 'cat > /var/tmp/l2r/postgresql.conf && echo "local all all peer" \
+         > /var/tmp/l2r/pg_hba.conf && : > /var/tmp/l2r/pg_ident.conf' \
+  && in_db runuser -u postgres -- /usr/lib/postgresql/16/bin/pg_ctl -D /var/tmp/l2r -l /var/tmp/l2r.log -w -t 180 start
+} > "$WORK/l2-restore.log" 2>&1
+# It takes connections while it still replays (hot standby); done when it has promoted.
+restored() { in_db runuser -u postgres -- psql -h /var/tmp -p 5499 -tAc "SELECT pg_is_in_recovery()" 2>/dev/null; }
+deadline=$((SECONDS + 120))
+until [ "$(restored)" = "f" ] || [ $SECONDS -gt $deadline ]; do sleep 2; done
+RESTORED="$(in_db runuser -u postgres -- psql -h /var/tmp -p 5499 -tAc "SELECT v || ' ' || pg_is_in_recovery() FROM l2_probe" 2>&1)"
+check "restored from bucket B with WAL replayed: the row written after the backup is there, recovery done" \
+    test "$RESTORED" = "after-the-backup false"
+[ "$RESTORED" = "after-the-backup false" ] || { echo "    got: $RESTORED"; in_db tail -20 /var/tmp/l2r.log; }
+in_db runuser -u postgres -- /usr/lib/postgresql/16/bin/pg_ctl -D /var/tmp/l2r -m fast stop >/dev/null 2>&1 || cat "$WORK/l2-restore.log"
+check "bucket B holds only ciphertext (backup.info isn't pgBackRest's plain text)" "$PY" -c "
+import boto3, sys
+s3 = boto3.client('s3', endpoint_url='http://127.0.0.1:4566', region_name='us-east-1', aws_access_key_id='test',
+                  aws_secret_access_key='test')
+body = s3.get_object(Bucket='$L2_BUCKET', Key='pgbackrest/backup/main/backup.info')['Body'].read()
+sys.exit(0 if body and b'[backrest]' not in body else 1)"
+l2_metric() {  # name -> its value for stanza main on ctl-1's /metrics ("none": absent)
+    in_host python3 -c "import sys, urllib.request
+prefix = sys.argv[1] + '{stanza=\"main\"} '
+lines = urllib.request.urlopen('http://127.0.0.1:9464/metrics').read().decode().splitlines()
+print(next((l[len(prefix):] for l in lines if l.startswith(prefix)), 'none'))" "$1"
+}
+deadline=$((SECONDS + 200))
+until [ "$(l2_metric ctl_l2_full_last_timestamp_seconds)" -gt 0 ] 2>/dev/null || [ $SECONDS -gt $deadline ]; do sleep 5; done
+check "ctl-1's l2 worker reads the full backup from bucket B" test "$(l2_metric ctl_l2_full_last_timestamp_seconds)" -gt 0
+check "and the newest WAL segment's time" test "$(l2_metric ctl_l2_wal_last_timestamp_seconds)" -gt 0
+check "and has run expire with its own key" test "$(l2_metric ctl_l2_expire_last_timestamp_seconds)" -gt 0
+check "Prometheus on ctl-1 has the L2 rules" sh -c "docker exec $NAME python3 -c \"import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:9090/api/v1/rules').read().decode())\" | grep -q L2WalArchiveLag"
 if dbplay 3; then ok "db-1 run again"; else bad "db-1 run again failed"; tail -30 "$WORK/db3.log"; fi
 check "the second db-1 run changed nothing" grep -qE 'db-1 +: ok=[0-9]+ +changed=0 +unreachable=0 +failed=0' "$WORK/db3.log"
 grep -E 'changed:' "$WORK/db3.log" | head -5 || true

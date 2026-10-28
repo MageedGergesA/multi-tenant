@@ -1,0 +1,5 @@
+---
+- name: Restart postgresql for archiving
+  ansible.builtin.systemd_service:
+    name: "postgresql@{{ pgbackrest_pg_version }}-main"
+    state: restarted

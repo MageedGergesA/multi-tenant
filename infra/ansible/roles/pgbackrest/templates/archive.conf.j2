@@ -1,0 +1,6 @@
+# {{ ansible_managed }}: infra/ansible role pgbackrest. WAL to bucket B (DOC-05 §2): the internal
+# cluster-loss RPO of about a minute. Not sold as PITR (ADR-001).
+wal_level = replica
+archive_mode = on
+archive_command = 'pgbackrest --stanza={{ pgbackrest_stanza }} archive-push %p'
+archive_timeout = 60

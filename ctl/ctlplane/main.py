@@ -203,7 +203,8 @@ class Ctl:
         if not _loopback(host):
             raise ConfigError('[monitoring] serves the local Prometheus and Alertmanager: listen on loopback')
         out['monitoring'] = _plain(monitoring.create_app(
-            self.store, webhook_token_sha256=c.get('monitoring', 'webhook_token_sha256'), workers=self.workers),
+            self.store, webhook_token_sha256=c.get('monitoring', 'webhook_token_sha256'), workers=self.workers,
+            l2_stanzas=[c.get('l2', 'stanza', 'main')] if c.has('l2') else []),
             host, port)
         return out
 
@@ -226,6 +227,12 @@ class Ctl:
                 ('drills', Drills(self.admission, per_day=c.get('policy', 'drills_per_day', 1)).run_once, 300)]
         if self.cpbackup:
             jobs.append(('controlplane_backup', self.cpbackup.run_once, 300))
+        if c.has('l2'):
+            from .l2 import L2
+            jobs.append(('l2', L2(self.store, stanza=c.get('l2', 'stanza', 'main'),
+                                  pgbackrest=c.get('l2', 'pgbackrest', ['pgbackrest']),
+                                  key=c.json_secret('l2', 'key_file'),
+                                  cipher_pass=c.secret('l2', 'cipher_pass_file')).run_once, 120))
         return jobs
 
 

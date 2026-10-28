@@ -1,0 +1,34 @@
+# {{ ansible_managed }}: infra/ansible role pgbackrest ({{ pgbackrest_mode }}). DOC-05 §2, §3.1.
+[global]
+repo1-type=s3
+repo1-s3-bucket={{ pgbackrest_bucket }}
+repo1-s3-endpoint={{ pgbackrest_s3_endpoint }}
+repo1-s3-region={{ pgbackrest_s3_region }}
+repo1-s3-uri-style={{ pgbackrest_s3_uri_style }}
+repo1-storage-port={{ pgbackrest_s3_port }}
+repo1-storage-verify-tls={{ 'y' if pgbackrest_s3_verify_tls else 'n' }}
+repo1-path=/pgbackrest
+repo1-cipher-type=aes-256-cbc
+repo1-retention-full=2
+repo1-retention-full-type=count
+compress-type=zst
+log-level-console=warn
+log-level-file=off
+{% if pgbackrest_mode == 'db' %}
+repo1-s3-key={{ pgbackrest_db_key.key_id }}
+repo1-s3-key-secret={{ pgbackrest_db_key.secret }}
+repo1-cipher-pass={{ pgbackrest_cipher_pass }}
+process-max={{ pgbackrest_process_max }}
+start-fast=y
+# db-1's key can't delete: expire runs on ctl-1 (DOC-05 §3.1).
+expire-auto=n
+archive-async=n
+{% else %}
+# ctl's l2 worker: key and cipher pass come as PGBACKREST_REPO1_* from ctl's secrets.
+lock-path=/tmp/pgbackrest
+{% endif %}
+
+[{{ pgbackrest_stanza }}]
+{% if pgbackrest_mode == 'db' %}
+pg1-path=/var/lib/postgresql/{{ pgbackrest_pg_version }}/main
+{% endif %}

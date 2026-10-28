@@ -10,4 +10,10 @@
     - wireguard
     - postgresql
     - monitoring     # before ctl: it makes the webhook token whose hash ctl.toml holds
+    - role: pgbackrest   # L2 read and expire (ctl's l2 worker), when bucket B is set
+      when: ctl_l2_bucket | default('') | length > 0
+      vars:
+        pgbackrest_mode: ctl
+        pgbackrest_bucket: "{{ ctl_l2_bucket }}"
+        pgbackrest_stanza: "{{ ctl_l2_stanza | default('main') }}"
     - ctl

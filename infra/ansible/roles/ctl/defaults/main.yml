@@ -13,6 +13,12 @@ ctl_monitoring_listen: 127.0.0.1:9464
 ctl_s3_endpoint: ""
 ctl_s3_region: eu-central-003
 ctl_policy: {breakglass_enabled: false, backups_per_host: 2, drills_per_day: 1}
+# L2 (DOC-05 §3.1): bucket B, read and expired by ctl's l2 worker through pgBackRest (role
+# pgbackrest, mode ctl). '' = no [l2]. Its secrets, in the SOPS file when set: the key that can
+# delete in bucket B ({key_id, secret}) and the repository's cipher pass.
+ctl_l2_bucket: ""
+ctl_l2_stanza: main
+ctl_l2_secret_keys: [l2_repo.json, l2_cipher_pass]
 # Required, no default: ctl_sops_file, ctl_tls_cert_file, ctl_agents_ca_cert_file, ctl_jwks_file,
 # ctl_oidc_issuer, ctl_oidc_audience, ctl_bucket_c, ctl_recovery_recipient.
 # The webhook token's hash: made on the host by the monitoring role.

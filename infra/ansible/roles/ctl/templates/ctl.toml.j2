@@ -60,6 +60,13 @@ code = "{{ region.code }}"
 backup_recipient = "{{ region.backup_recipient }}"
 backup_bucket = "{{ region.backup_bucket }}"
 {% endfor %}
+{% if ctl_l2_bucket %}
+
+[l2]
+stanza = "{{ ctl_l2_stanza }}"
+key_file = "/run/ctl/l2_repo.json"
+cipher_pass_file = "/run/ctl/l2_cipher_pass"
+{% endif %}
 
 [policy]
 breakglass_enabled = {{ ctl_policy.breakglass_enabled | lower }}

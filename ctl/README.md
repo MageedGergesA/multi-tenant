@@ -874,6 +874,20 @@ ctlplane drill ...`; the file goes when `ctl-secrets` next restarts or stops.
     `app.config` secrets sealed for `app.start`: the agent renders the files,
     then starts. Without a slot it is refused (`NOT_FOUND`). Tests that used
     Tenant.Start as a generic one-step operation use Tenant.Stop.
+74. **L2 had no supervisor** (DOC-05 §3.1, §8): `ctlplane/l2.py`, the `l2`
+    worker (`[l2]`, every 2 minutes), runs pgBackRest on ctl-1 against bucket
+    B with the delete-capable key and the cipher pass from SOPS, passed as
+    `PGBACKREST_REPO1_*` environment (never in a config file or argument):
+    `expire` once a day (db-1's key can't delete, `expire-auto=n` there),
+    `info` for the newest full and full-or-differential, and `repo-ls` of the
+    newest segment's directory for when the newest WAL was stored. Results in
+    `l2_status` (migration 0017); a failed read keeps the last good values
+    (the alerts age from them) and records the error. Metrics
+    `ctl_l2_{checked,full_last,backup_last,wal_last,expire_last}_timestamp_seconds`
+    (0 for a configured stanza never read; times past now read as 0), rules
+    `monitoring/rules/l2.yml`: WAL lag over 5 minutes (only while the
+    repository is being read), no full for 8 days, no full or differential
+    for 26 hours, repository unread for 15 minutes, expire stale for 3 days.
 
 ## Tests
 

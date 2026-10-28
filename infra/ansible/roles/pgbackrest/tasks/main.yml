@@ -1,0 +1,109 @@
+---
+- name: Required variables
+  ansible.builtin.assert:
+    that:
+      - pgbackrest_mode in ['db', 'ctl']
+      - pgbackrest_bucket | default('') | length > 0
+      - pgbackrest_s3_endpoint | default('') | length > 0
+      - pgbackrest_mode != 'db' or (pgbackrest_db_key_file | default('') | length > 0
+        and pgbackrest_cipher_pass_file | default('') | length > 0)
+    fail_msg: pgbackrest_bucket, pgbackrest_s3_endpoint and (db) pgbackrest_db_key_file, pgbackrest_cipher_pass_file
+    quiet: true
+
+- name: The pgBackRest package
+  ansible.builtin.apt:
+    name: [pgbackrest]
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: The db host's key and cipher pass (controller files)
+  when: pgbackrest_mode == 'db'
+  ansible.builtin.set_fact:
+    pgbackrest_db_key: "{{ lookup('ansible.builtin.file', pgbackrest_db_key_file) | from_json }}"
+    pgbackrest_cipher_pass: "{{ lookup('ansible.builtin.file', pgbackrest_cipher_pass_file) | trim }}"
+  no_log: true
+
+# The package's /etc/pgbackrest.conf is used only when this one is missing.
+- name: Configuration directory
+  ansible.builtin.file:
+    path: /etc/pgbackrest
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+# db-1's holds its key and the cipher pass (postgres only); ctl-1's none (ctl passes them).
+- name: Configuration
+  ansible.builtin.template:
+    src: pgbackrest.conf.j2
+    dest: /etc/pgbackrest/pgbackrest.conf
+    owner: root
+    group: "{{ 'postgres' if pgbackrest_mode == 'db' else 'root' }}"
+    mode: "{{ '0640' if pgbackrest_mode == 'db' else '0644' }}"
+  no_log: true
+
+- name: The package's sample configuration is not used
+  ansible.builtin.file:
+    path: /etc/pgbackrest.conf
+    state: absent
+
+- name: Archiving, backups and the check timer (db-1)
+  when: pgbackrest_mode == 'db'
+  block:
+    - name: WAL archiving
+      ansible.builtin.template:
+        src: archive.conf.j2
+        dest: "/etc/postgresql/{{ pgbackrest_pg_version }}/main/conf.d/archive.conf"
+        owner: postgres
+        group: postgres
+        mode: "0644"
+      notify: Restart postgresql for archiving
+
+    - name: PostgreSQL archives now (archive_mode needs a restart)
+      ansible.builtin.meta: flush_handlers
+
+    - name: Is the stanza in the repository?
+      ansible.builtin.command: runuser -u postgres -- pgbackrest --stanza={{ pgbackrest_stanza }} --output=json info
+      register: pgbackrest_info
+      changed_when: false
+
+    # Code 0: there and valid. Anything else (1: missing) is created; a stanza that exists but
+    # doesn't match this cluster makes stanza-create fail, and the play with it.
+    - name: The stanza
+      ansible.builtin.command: runuser -u postgres -- pgbackrest --stanza={{ pgbackrest_stanza }} stanza-create
+      when: (pgbackrest_info.stdout | from_json)[0].status.code != 0
+      changed_when: true
+
+    - name: Archiving reaches the repository
+      ansible.builtin.command: runuser -u postgres -- pgbackrest --stanza={{ pgbackrest_stanza }} check
+      changed_when: false
+
+    - name: Backup and check unit
+      ansible.builtin.template:
+        src: pgbackrest@.service.j2
+        dest: /etc/systemd/system/pgbackrest@.service
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Timers
+      ansible.builtin.template:
+        src: pgbackrest.timer.j2
+        dest: "/etc/systemd/system/pgbackrest-{{ item.kind }}.timer"
+        owner: root
+        group: root
+        mode: "0644"
+      loop:
+        - {kind: full, at: "{{ pgbackrest_full_on }}"}
+        - {kind: diff, at: "{{ pgbackrest_diff_on }}"}
+        - {kind: check, at: "{{ pgbackrest_check_on }}"}
+      register: pgbackrest_timers
+
+    - name: Run the timers
+      ansible.builtin.systemd_service:
+        name: "pgbackrest-{{ item }}.timer"
+        enabled: true
+        daemon_reload: "{{ pgbackrest_timers is changed }}"
+        state: started
+      loop: [full, diff, check]

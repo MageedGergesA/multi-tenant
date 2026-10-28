@@ -153,7 +153,7 @@ def _image_present():
 
 
 @pytest.mark.skipif(not _image_present(), reason='needs %s (docker pull)' % PROMETHEUS)
-@pytest.mark.parametrize('rules', ['backups', 'drills', 'controlplane', 'workers'])
+@pytest.mark.parametrize('rules', ['backups', 'drills', 'controlplane', 'workers', 'l2'])
 def test_rules_under_promtool(rules):
     run = lambda *a: subprocess.run(['docker', 'run', '--rm', '-v', '%s:/r:ro' % RULES, '-w', '/r',  # noqa: E731
                                      '--entrypoint', 'promtool', PROMETHEUS, *a], capture_output=True, text=True)

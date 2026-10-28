@@ -1,0 +1,108 @@
+# promtool test rules monitoring/rules/l2_test.yml
+rule_files:
+  - l2.yml
+evaluation_interval: 1m
+tests:
+  # WAL stored at t=0, the repository read every minute (checked = now): quiet at 5 min, firing after.
+  - interval: 1m
+    input_series:
+      - series: 'ctl_l2_wal_last_timestamp_seconds{stanza="main"}'
+        values: '0+0x20'
+      - series: 'ctl_l2_checked_timestamp_seconds{stanza="main"}'
+        values: '0+60x20'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: L2WalArchiveLag
+        exp_alerts: []
+      - eval_time: 6m
+        alertname: L2WalArchiveLag
+        exp_alerts:
+          - exp_labels: {severity: sev2, runbook: RB-08, stanza: main}
+            exp_annotations:
+              summary: "WAL archive lag over 5 minutes (stanza main)"
+              description: "The newest WAL segment in bucket B was stored 6m 0s ago: db-1's archive-push or its check timer is failing; the cluster-loss RPO grows with it."
+      - eval_time: 6m
+        alertname: L2Unread
+        exp_alerts: []
+  # A segment stored every 2 minutes keeps it quiet.
+  - interval: 1m
+    input_series:
+      - series: 'ctl_l2_wal_last_timestamp_seconds{stanza="main"}'
+        values: '0 0 120 120 240 240 360 360 480 480 600 600 720 720'
+      - series: 'ctl_l2_checked_timestamp_seconds{stanza="main"}'
+        values: '0+60x13'
+    alert_rule_test:
+      - eval_time: 13m
+        alertname: L2WalArchiveLag
+        exp_alerts: []
+  # ctl-1 stopped reading at t=0: L2Unread after 15 min, and the lag alert defers to it (blind, not lagging).
+  - interval: 1m
+    input_series:
+      - series: 'ctl_l2_wal_last_timestamp_seconds{stanza="main"}'
+        values: '0+0x20'
+      - series: 'ctl_l2_checked_timestamp_seconds{stanza="main"}'
+        values: '0+0x20'
+    alert_rule_test:
+      - eval_time: 16m
+        alertname: L2Unread
+        exp_alerts:
+          - exp_labels: {severity: sev2, runbook: RB-08, stanza: main}
+            exp_annotations:
+              summary: "ctl-1 can't read the L2 repository (stanza main)"
+              description: "The last successful read of bucket B was 16m 0s ago: the other L2 alerts are blind until it works (ctl's l2 worker logs say why)."
+      - eval_time: 16m
+        alertname: L2WalArchiveLag
+        exp_alerts: []
+  # Full at t=0, differentials daily: the full alert after 8 days, the backup alert never.
+  - interval: 1h
+    input_series:
+      - series: 'ctl_l2_full_last_timestamp_seconds{stanza="main"}'
+        values: '0+0x200'
+      - series: 'ctl_l2_backup_last_timestamp_seconds{stanza="main"}'
+        values: '0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 86400+0x23 172800+0x23 259200+0x23 345600+0x23 432000+0x23 518400+0x23 604800+0x23 691200+0x23'
+    alert_rule_test:
+      - eval_time: 192h
+        alertname: L2FullStale
+        exp_alerts: []
+      - eval_time: 193h
+        alertname: L2FullStale
+        exp_alerts:
+          - exp_labels: {severity: sev2, runbook: RB-08, stanza: main}
+            exp_annotations:
+              summary: "No L2 full backup for 8 days (stanza main)"
+              description: "The newest full pgBackRest backup is 8d 1h 0m 0s old (weekly, Sunday 01:00 UTC)."
+      - eval_time: 193h
+        alertname: L2BackupStale
+        exp_alerts: []
+  # No full or differential since t=0: the backup alert after 26 h.
+  - interval: 1h
+    input_series:
+      - series: 'ctl_l2_backup_last_timestamp_seconds{stanza="main"}'
+        values: '0+0x30'
+    alert_rule_test:
+      - eval_time: 26h
+        alertname: L2BackupStale
+        exp_alerts: []
+      - eval_time: 27h
+        alertname: L2BackupStale
+        exp_alerts:
+          - exp_labels: {severity: sev2, runbook: RB-08, stanza: main}
+            exp_annotations:
+              summary: "No L2 differential or full backup for 26 hours (stanza main)"
+              description: "The newest full or differential pgBackRest backup is 1d 3h 0m 0s old (daily, 01:00 UTC)."
+  # Expire last ran at t=0: sev3 after 3 days.
+  - interval: 1h
+    input_series:
+      - series: 'ctl_l2_expire_last_timestamp_seconds{stanza="main"}'
+        values: '0+0x80'
+    alert_rule_test:
+      - eval_time: 72h
+        alertname: L2ExpireStale
+        exp_alerts: []
+      - eval_time: 73h
+        alertname: L2ExpireStale
+        exp_alerts:
+          - exp_labels: {severity: sev3, runbook: RB-08, stanza: main}
+            exp_annotations:
+              summary: "pgBackRest expire hasn't run for 3 days (stanza main)"
+              description: "The last expire on ctl-1 succeeded 3d 1h 0m 0s ago: bucket B keeps growing past two full cycles."

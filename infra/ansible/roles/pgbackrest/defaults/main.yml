@@ -1,0 +1,26 @@
+---
+# L2 (DOC-05 §2, §3.1): pgBackRest to bucket B. On db-1 (pgbackrest_mode: db) it pushes WAL
+# continuously and takes the full and differential backups, with a key that can't delete; on
+# ctl-1 (pgbackrest_mode: ctl) ctl's `l2` worker reads the repository and runs expire with the
+# key that can (that key and the cipher pass reach it from SOPS, ctl.toml [l2]).
+#
+# Required, no default:
+#   pgbackrest_mode: db | ctl
+#   pgbackrest_bucket: bucket B (versioned, a 14-day lifecycle for hidden versions; B2 side)
+#   pgbackrest_s3_endpoint: host only, e.g. s3.eu-central-003.backblazeb2.com
+# db mode, on the controller (from the SOPS repo, decrypted for the run):
+#   pgbackrest_db_key_file: JSON {key_id, secret}, bucket B, no deleteFiles
+#   pgbackrest_cipher_pass_file: the repository's cipher pass. Lose it and L2 is unreadable:
+#     it belongs to the offline recovery set with the region keys (DOC-05 §4).
+pgbackrest_stanza: main
+pgbackrest_s3_region: eu-central-003
+pgbackrest_s3_uri_style: path
+pgbackrest_s3_port: 443
+pgbackrest_s3_verify_tls: true          # false only against a test stand-in
+pgbackrest_pg_version: 16
+pgbackrest_process_max: 2
+# Weekly full Sunday 01:00 UTC, differential the other days (DOC-05 §2); `check` every 2 minutes
+# switches WAL and verifies archiving, so an idle cluster still stores a segment within 5 minutes.
+pgbackrest_full_on: "Sun *-*-* 01:00:00 UTC"
+pgbackrest_diff_on: "Mon..Sat *-*-* 01:00:00 UTC"
+pgbackrest_check_on: "*:0/2"

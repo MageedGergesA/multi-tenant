@@ -81,7 +81,30 @@ def drill_ages(c) -> list[dict]:
         'GROUP BY e.tenant_id, e.id ORDER BY e.tenant_id', (list(BACKED_UP),)).fetchall()
 
 
-def metrics(c, now=None) -> str:
+L2_GAUGES = (
+    ('checked_at', 'ctl_l2_checked_timestamp_seconds', 'Last read of the L2 repository (bucket B) that succeeded.'),
+    ('full_at', 'ctl_l2_full_last_timestamp_seconds', 'Stop time of the newest full pgBackRest backup.'),
+    ('backup_at', 'ctl_l2_backup_last_timestamp_seconds', 'Stop time of the newest full or differential backup.'),
+    ('wal_at', 'ctl_l2_wal_last_timestamp_seconds', 'When the newest WAL segment was stored in bucket B.'),
+    ('expired_at', 'ctl_l2_expire_last_timestamp_seconds', 'Last pgBackRest expire (two full cycles) that succeeded.'),
+)
+
+
+def l2_metrics(c, now, stanzas=()) -> list[str]:
+    """One series per stanza ctl-1 is configured for or has read (0: never). Bounded by now:
+    a time from the repository in the future mustn't keep the alerts quiet."""
+    cols = ', '.join('COALESCE(EXTRACT(EPOCH FROM CASE WHEN %s <= %%(now)s THEN %s END), 0) AS %s' % (k, k, k)
+                     for k, _, _ in L2_GAUGES)
+    rows = {r['stanza']: r for r in c.execute('SELECT stanza, %s FROM l2_status' % cols, {'now': now}).fetchall()}
+    out = []
+    for key, name, text in L2_GAUGES:
+        out += ['# HELP %s %s (0: never)' % (name, text), '# TYPE %s gauge' % name]
+        out += ['%s{stanza="%s"} %d' % (name, s, int(rows[s][key]) if s in rows else 0)
+                for s in sorted(set(stanzas) | set(rows))]
+    return out
+
+
+def metrics(c, now=None, l2_stanzas=()) -> str:
     """`now`: the store's clock (bounds the dump, anchor and drill times read)."""
     now = _ts(time.time() if now is None else now)
     rows = backup_ages(c)
@@ -115,6 +138,7 @@ def metrics(c, now=None) -> str:
             '# HELP ctl_controlplane_drill_last_pass_timestamp_seconds Last passed control-plane drill (never: the '
             'first dump; 0: no dump yet).', '# TYPE ctl_controlplane_drill_last_pass_timestamp_seconds gauge',
             'ctl_controlplane_drill_last_pass_timestamp_seconds %d' % int(last['drill'])]
+    out += l2_metrics(c, now, l2_stanzas)
     return '\n'.join(out) + '\n'
 
 
@@ -177,7 +201,7 @@ def workers_metric(workers) -> str:
     return '\n'.join(out) + '\n'
 
 
-def create_app(store: Store, *, webhook_token_sha256: str, workers=None) -> FastAPI:
+def create_app(store: Store, *, webhook_token_sha256: str, workers=None, l2_stanzas=()) -> FastAPI:
     """`webhook_token_sha256`: SHA-256 (hex) of the bearer token in Alertmanager's
     webhook `http_config`; the token itself isn't kept here. `workers`: this
     process's `main.Workers`, for `ctl_workers_leader`."""
@@ -186,7 +210,7 @@ def create_app(store: Store, *, webhook_token_sha256: str, workers=None) -> Fast
     @app.get('/metrics')
     def get_metrics():
         with store.connect() as c:
-            text = metrics(c, store.clock())
+            text = metrics(c, store.clock(), l2_stanzas)
         if workers is not None:
             text += workers_metric(workers)
         return Response(text, media_type='text/plain; version=0.0.4')

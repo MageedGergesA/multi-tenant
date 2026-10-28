@@ -1,0 +1,15 @@
+# {{ ansible_managed }}: infra/ansible role pgbackrest. %i: full, diff or check.
+[Unit]
+Description=pgBackRest %i ({{ pgbackrest_stanza }})
+After=postgresql@{{ pgbackrest_pg_version }}-main.service
+Requires=postgresql@{{ pgbackrest_pg_version }}-main.service
+
+[Service]
+Type=oneshot
+User=postgres
+Group=postgres
+ExecStart=/bin/sh -c 'if [ "%i" = check ]; then exec pgbackrest --stanza={{ pgbackrest_stanza }} check; else exec pgbackrest --stanza={{ pgbackrest_stanza }} --type=%i backup; fi'
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=full

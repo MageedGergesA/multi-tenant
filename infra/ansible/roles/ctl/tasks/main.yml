@@ -211,7 +211,7 @@
 - name: Every secret the configuration names is there
   ansible.builtin.stat:
     path: "/run/ctl/{{ item }}"
-  loop: "{{ ctl_secret_keys }}"
+  loop: "{{ ctl_secret_keys + (ctl_l2_secret_keys if ctl_l2_bucket else []) }}"
   register: ctl_secret_files
 
 - name: Missing keys in the SOPS file

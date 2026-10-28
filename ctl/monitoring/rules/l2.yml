@@ -1,0 +1,46 @@
+# DOC-05 §2, §3.1, §8 / DOC-07 RB-07, RB-08: the L2 layer (pgBackRest on db-1, bucket B), as
+# ctl-1 reads it (ctlplane/l2.py; 0 = never). db-1 runs `pgbackrest check` every 2 minutes, which
+# switches WAL, so even an idle cluster stores a segment well within 5 minutes.
+groups:
+  - name: l2
+    rules:
+      - alert: L2WalArchiveLag
+        expr: time() - ctl_l2_wal_last_timestamp_seconds > 5 * 60 and time() - ctl_l2_checked_timestamp_seconds < 15 * 60
+        labels:
+          severity: sev2
+          runbook: RB-08
+        annotations:
+          summary: "WAL archive lag over 5 minutes (stanza {{ $labels.stanza }})"
+          description: "The newest WAL segment in bucket B was stored {{ $value | humanizeDuration }} ago: db-1's archive-push or its check timer is failing; the cluster-loss RPO grows with it."
+      - alert: L2FullStale
+        expr: time() - ctl_l2_full_last_timestamp_seconds > 8 * 86400
+        labels:
+          severity: sev2
+          runbook: RB-08
+        annotations:
+          summary: "No L2 full backup for 8 days (stanza {{ $labels.stanza }})"
+          description: "The newest full pgBackRest backup is {{ $value | humanizeDuration }} old (weekly, Sunday 01:00 UTC)."
+      - alert: L2BackupStale
+        expr: time() - ctl_l2_backup_last_timestamp_seconds > 26 * 3600
+        labels:
+          severity: sev2
+          runbook: RB-08
+        annotations:
+          summary: "No L2 differential or full backup for 26 hours (stanza {{ $labels.stanza }})"
+          description: "The newest full or differential pgBackRest backup is {{ $value | humanizeDuration }} old (daily, 01:00 UTC)."
+      - alert: L2Unread
+        expr: time() - ctl_l2_checked_timestamp_seconds > 15 * 60
+        labels:
+          severity: sev2
+          runbook: RB-08
+        annotations:
+          summary: "ctl-1 can't read the L2 repository (stanza {{ $labels.stanza }})"
+          description: "The last successful read of bucket B was {{ $value | humanizeDuration }} ago: the other L2 alerts are blind until it works (ctl's l2 worker logs say why)."
+      - alert: L2ExpireStale
+        expr: time() - ctl_l2_expire_last_timestamp_seconds > 3 * 86400
+        labels:
+          severity: sev3
+          runbook: RB-08
+        annotations:
+          summary: "pgBackRest expire hasn't run for 3 days (stanza {{ $labels.stanza }})"
+          description: "The last expire on ctl-1 succeeded {{ $value | humanizeDuration }} ago: bucket B keeps growing past two full cycles."

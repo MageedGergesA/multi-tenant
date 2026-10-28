@@ -1,0 +1,11 @@
+# {{ ansible_managed }}: infra/ansible role pgbackrest.
+[Unit]
+Description=pgBackRest {{ item.kind }} schedule
+
+[Timer]
+OnCalendar={{ item.at }}
+Persistent=true
+Unit=pgbackrest@{{ item.kind }}.service
+
+[Install]
+WantedBy=timers.target
