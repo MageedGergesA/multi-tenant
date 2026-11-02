@@ -61,7 +61,7 @@ class FakeBackrest:
 def _l2(w, run):
     """An L2 worker whose db-1 hold is granted (its own tests are below)."""
     l2 = L2(w.store, run=run, clock=w.clock)
-    l2.hold = lambda now: (None, 900)
+    l2.hold = lambda now: (None, now + 900)
     return l2
 
 
@@ -260,6 +260,15 @@ def test_a_db_host_that_never_reported_reads_0(w):
     assert 'ctl_l2_archive_pending_segments{host_id="%s"}' % DB_HOST not in text
 
 
+def test_a_report_without_the_queue_has_no_queue_series(w):
+    from .conftest import DB_HOST
+    w.clock.t = NOON
+    w.store.record_archiver(DB_HOST, _report(pending=None))
+    text = _metrics(w)
+    assert 'ctl_l2_archiver_report_timestamp_seconds{host_id="%s"} %d' % (DB_HOST, NOON) in text
+    assert 'ctl_l2_archive_pending_segments{host_id="%s"}' % DB_HOST not in text
+
+
 def test_never_archived_and_app_hosts_are_ignored(w):
     from .conftest import APP_HOST, DB_HOST
     w.clock.t = NOON
@@ -342,3 +351,37 @@ def test_no_db_host_no_expire(w):
     run = FakeBackrest()
     L2(w.store, run=run, clock=w.clock).run_once()
     assert _expires(run) == 0 and _hold_op(w) == []
+
+
+def test_a_slow_read_doesnt_stretch_the_lease(w):
+    """Codex: `now` taken before minutes of repository reads. The clock is read again before expire."""
+    w.clock.t = NOON
+    run = FakeBackrest()
+    l2 = L2(w.store, run=run, clock=w.clock)
+    l2.run_once()
+    [op] = _hold_op(w)
+    _answer(w, op['id'], {'held': True, 'seconds': 900})
+    w.clock.t = NOON + 300                                       # 600 s of lease left at the start
+    real = run.__call__
+
+    def slow(args, **kw):
+        if args[-1] == 'info':
+            w.clock.t += 500                                     # a slow bucket
+        return real(args, **kw)
+    l2.run = slow
+    l2.run_once()
+    assert _expires(run) == 0                                    # 40 s left when it would start
+
+
+def test_db_1s_clock_doesnt_set_the_lease(w):
+    """Codex: a db clock ahead (accepted within the envelope's life) overstated `until`. Only
+    ctl-1's dispatch time and the lease's length count."""
+    w.clock.t = NOON
+    run = FakeBackrest()
+    l2 = L2(w.store, run=run, clock=w.clock)
+    l2.run_once()
+    [op] = _hold_op(w)
+    _answer(w, op['id'], {'held': True, 'seconds': 900, 'until': NOON + 900 + 300})
+    w.clock.t = NOON + 650                                       # 250 s left by ctl-1's clock
+    l2.run_once()
+    assert _expires(run) == 0

@@ -6,9 +6,10 @@ newer than FULL_EVERY; differential otherwise.
 
     pgbackrest-scheduled --stanza main --full-day 6 --lock /var/lib/pgbackrest-lock/backup.lock
 
-The backup runs holding `--lock` (flock), which the db agent takes while ctl-1 expires
-(L2.Hold): pgBackRest's own locks are per host, so this keeps the two apart. Taken by a hold,
-it waits up to `--lock-wait` seconds, then fails (and the unit retries).
+The backup runs holding `--lock` (flock), and only when no lease is in force: the db agent
+writes `<lock>.hold` (the end, this host's clock) under the same lock when ctl-1 asks before
+expire (L2.Hold). pgBackRest's own locks are per host, so this keeps backup and expire apart.
+It waits up to `--lock-wait` seconds for the lock and the lease, then fails (the unit retries).
 """
 import argparse
 import fcntl
@@ -31,18 +32,34 @@ def choose(info: dict | None, now: float, full_day: int) -> str:
     return 'full' if not fulls or now - max(fulls) >= FULL_EVERY else 'diff'
 
 
-def take(path: str, wait: float) -> int:
+def lease_until(path: str) -> float:
+    """The end of the L2 lease next to the lock (0: none). Unreadable counts as in force."""
+    try:
+        with open(path + '.hold') as f:
+            return float(f.read().strip())
+    except FileNotFoundError:
+        return 0.0
+    except (OSError, ValueError):
+        return float('inf')
+
+
+def take(path: str, wait: float, poll: float = 5) -> int:
+    """The lock, with no lease in force: held by the caller until it exits."""
     fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
     deadline = time.monotonic() + wait
     while True:
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            return fd
+            if lease_until(path) <= time.time():
+                return fd
+            fcntl.flock(fd, fcntl.LOCK_UN)      # ctl-1 may be expiring: let the lease run out
+            why = 'an L2 lease (ctl-1 expiring) until %s' % lease_until(path)
         except BlockingIOError:
-            if time.monotonic() >= deadline:
-                os.close(fd)
-                raise SystemExit('pgbackrest-scheduled: %s held for %ds (an L2 hold for expire?)' % (path, wait))
-            time.sleep(5)
+            why = 'the lock held'
+        if time.monotonic() >= deadline:
+            os.close(fd)
+            raise SystemExit('pgbackrest-scheduled: %s held for %ds: %s' % (path, wait, why))
+        time.sleep(poll)
 
 
 def main(argv=None) -> int:

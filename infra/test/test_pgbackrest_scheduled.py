@@ -45,16 +45,34 @@ def test_unreadable_repository_tries_a_full():
     assert sched.choose(info((SUNDAY, 1), code=1), SUNDAY + DAY, 6) == 'full'
 
 
-def test_a_backup_waits_for_a_hold_then_gives_up(tmp_path):
-    """The db agent's L2.Hold has the lock: the backup doesn't start (and fails when the wait ends)."""
+def test_a_backup_waits_for_the_lock_then_gives_up(tmp_path):
     import fcntl
     import os
     import pytest
     lock = str(tmp_path / 'backup.lock')
     holder = os.open(lock, os.O_RDWR | os.O_CREAT, 0o600)
     fcntl.flock(holder, fcntl.LOCK_EX)
-    with pytest.raises(SystemExit, match='held'):
-        sched.take(lock, 0.1)
+    with pytest.raises(SystemExit, match='lock held'):
+        sched.take(lock, 0.1, poll=0.05)
     os.close(holder)
-    fd = sched.take(lock, 0.1)
-    os.close(fd)
+    os.close(sched.take(lock, 0.1, poll=0.05))
+
+
+def test_a_lease_in_force_keeps_the_backup_waiting_even_with_the_lock_free(tmp_path):
+    """The db agent wrote the lease and let go of the lock (or was restarted): still no backup."""
+    import os
+    import time
+    import pytest
+    lock = str(tmp_path / 'backup.lock')
+    (tmp_path / 'backup.lock.hold').write_text('%.3f\n' % (time.time() + 60))
+    with pytest.raises(SystemExit, match='L2 lease'):
+        sched.take(lock, 0.1, poll=0.05)
+    (tmp_path / 'backup.lock.hold').write_text('%.3f\n' % (time.time() - 1))     # ran out
+    os.close(sched.take(lock, 0.1, poll=0.05))
+
+
+def test_an_unreadable_lease_counts_as_in_force(tmp_path):
+    import pytest
+    (tmp_path / 'backup.lock.hold').write_text('garbage')
+    with pytest.raises(SystemExit, match='L2 lease'):
+        sched.take(str(tmp_path / 'backup.lock'), 0.1, poll=0.05)

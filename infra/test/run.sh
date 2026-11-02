@@ -380,6 +380,12 @@ check "ctl-1's l2 worker reads the full backup from bucket B" test "$(l2_metric 
 check "and the newest WAL segment's time" test "$(l2_metric ctl_l2_wal_last_timestamp_seconds)" -gt 0
 check "and has run expire with its own key, inside a hold db-1's agent granted" test "$(l2_metric ctl_l2_expire_last_timestamp_seconds)" -gt 0
 check "the hold: an L2.Hold operation completed on db-1, held" sh -c "docker exec $NAME runuser -u postgres -- psql -d ctl -tAc \"SELECT o.state || ' ' || (s.observed->>'held') FROM operation o JOIN operation_step s ON s.operation_id = o.id WHERE o.type = 'L2.Hold' ORDER BY o.created_at DESC LIMIT 1\" | grep -qx 'COMPLETED true'"
+# The lease is on db-1's disk: a backup now waits, and still does after agent-exec restarts.
+lease_blocks() { in_db runuser -u postgres -- /usr/local/sbin/pgbackrest-scheduled --stanza main \
+    --lock /var/lib/pgbackrest-lock/backup.lock --lock-wait 1 2>&1 | grep -q 'L2 lease'; }
+check "while ctl-1's lease is in force a backup on db-1 waits" lease_blocks
+in_db systemctl restart agent-exec
+check "and still after agent-exec restarts (Codex: the lease isn't the executor's)" lease_blocks
 archiver_metric() {  # name -> its value for db-1 on ctl-1's /metrics ("none": absent)
     in_host python3 -c "import sys, urllib.request
 prefix = '%s{host_id=\"%s\"} ' % (sys.argv[1], sys.argv[2])

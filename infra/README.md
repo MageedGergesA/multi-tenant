@@ -273,9 +273,19 @@ unit never sees its device: the Volume's mount runs only on a real host
       Left: a backup run by hand outside the unit doesn't take the lock (use
       `systemctl start pgbackrest-backup`), and an agent-exec restart during a
       hold drops it early.
+    - (Superseded by 19: the hold is a lease on disk, not a lock the
+      executor holds.)
     - **The first version's timers survived an upgrade**: the role stops,
       disables and removes `pgbackrest-{full,diff}.timer` and
       `pgbackrest@.service` (the harness plants them and checks).
+19. Codex review of 18:
+    - **An agent-exec restart released the hold** (deployments restart it):
+      the hold is now a lease file next to the lock (`backup.lock.hold`, its
+      end by db-1's clock), written while holding the lock (so no backup is
+      running) and then let go. `pgbackrest-scheduled` takes the lock and waits
+      while a lease is in force; an unreadable lease counts as in force. The
+      harness restarts agent-exec with a lease out and a backup still waits.
+    - The lease's timing on ctl-1 and an older agent's poll: ctl (README 77).
 
 ## Not built
 

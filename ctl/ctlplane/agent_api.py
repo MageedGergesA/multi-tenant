@@ -32,7 +32,8 @@ class Archiver(BaseModel):
     failed_count: int = Field(ge=0, le=2 ** 62)
     last_failed_at: float | None = Field(default=None, **EPOCH)
     at: float = Field(**EPOCH)
-    pending: int = Field(ge=0, le=2 ** 31)                       # .ready files: finished, not archived
+    # .ready files: finished, not archived. None: an agent that doesn't report the queue (older).
+    pending: int | None = Field(default=None, ge=0, le=2 ** 31)
     oldest_pending_age: float | None = Field(default=None, ge=0, le=2 ** 31)
 
 

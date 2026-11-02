@@ -10,7 +10,6 @@ followed by a final reject; one file per tenant lives there.
 import fcntl
 import os
 import re
-import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -34,8 +33,6 @@ class DbHostConfig:
 class PgBackend:
     def __init__(self, config: DbHostConfig):
         self.c = config
-        self._hold = None               # (fd, timer) while L2.Hold has the backup lock
-        self._hold_lock = threading.Lock()
 
     def _conn(self, dbname=None):
         conn = psycopg.connect(self.c.dsn, autocommit=True, **({'dbname': dbname} if dbname else {}))
@@ -133,31 +130,31 @@ class PgBackend:
         return {'max_connections': max_conn, 'per_db': dict(rows)}
 
     def pg_l2_hold(self, seconds):
-        """Take the backup lock for `seconds` (released by a timer, or with this process): no backup
-        starts on db-1 meanwhile, so ctl-1's expire can't drop one it is finishing. Not taken while a
-        backup holds it. Taken again (a new lease) if this process already holds it."""
-        with self._hold_lock:
-            if self._hold is not None:
-                self._hold[1].cancel()
-                fd = self._hold[0]
-            else:
-                fd = os.open(self.c.l2_lock, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
-                try:
-                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                except BlockingIOError:
-                    os.close(fd)
-                    return {'held': False}
-            timer = threading.Timer(seconds, self._release_hold)
-            timer.daemon = True
-            timer.start()
-            self._hold = (fd, timer)
-        return {'held': True, 'seconds': seconds, 'until': time.time() + seconds}
-
-    def _release_hold(self):
-        with self._hold_lock:
-            if self._hold is not None:
-                os.close(self._hold[0])         # closing releases the flock
-                self._hold = None
+        """A lease of `seconds` on db-1's backups for ctl-1's expire: written next to the backup lock
+        (`<lock>.hold`, the end by this host's clock) while holding that lock, so no backup is
+        running when it is granted. Every backup takes the lock and waits while a lease is in force
+        (pgbackrest-scheduled). On disk, not in this process: an executor restart (or a reboot)
+        doesn't end it. Refused while a backup holds the lock."""
+        fd = os.open(self.c.l2_lock, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+        try:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                return {'held': False}
+            until = time.time() + seconds
+            lease = self.c.l2_lock.with_name(self.c.l2_lock.name + '.hold')
+            tmp = lease.with_name('.' + lease.name + '.tmp')
+            tmp.unlink(missing_ok=True)
+            out = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+            try:
+                os.write(out, b'%.3f\n' % until)
+                os.fsync(out)
+            finally:
+                os.close(out)
+            os.replace(tmp, lease)
+            return {'held': True, 'seconds': seconds, 'until': until}
+        finally:
+            os.close(fd)                    # the lock: only while writing
 
     def pg_archiver(self):
         """WAL archiving as PostgreSQL sees it (pg_stat_archiver), for ctl-1's L2 lag alert: the

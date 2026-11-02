@@ -114,17 +114,18 @@ def archiver_metrics(c, now) -> list[str]:
                      "FROM host h LEFT JOIN db_archiver a ON a.host_id = h.id AND a.reported_at <= %s "
                      "WHERE h.role = 'db' AND h.state = 'active' ORDER BY h.id", (now,)).fetchall()
     seen = [r for r in rows if r['reported']]
+    queued = [r for r in seen if r['pending'] is not None]         # an older agent reports no queue
     out = ['# HELP ctl_l2_archiver_report_timestamp_seconds When db-1 last reported its WAL archiver (ctl-1 '
            'clock; 0: never).', '# TYPE ctl_l2_archiver_report_timestamp_seconds gauge']
     out += ['ctl_l2_archiver_report_timestamp_seconds{host_id="%s"} %d' % (r['host_id'], int(r['reported']))
             for r in rows]
     out += ['# HELP ctl_l2_archive_pending_segments Finished WAL segments waiting to be archived (.ready files).',
             '# TYPE ctl_l2_archive_pending_segments gauge']
-    out += ['ctl_l2_archive_pending_segments{host_id="%s"} %d' % (r['host_id'], r['pending']) for r in seen]
+    out += ['ctl_l2_archive_pending_segments{host_id="%s"} %d' % (r['host_id'], r['pending']) for r in queued]
     out += ['# HELP ctl_l2_archive_oldest_pending_seconds Age of the oldest segment waiting to be archived: the '
             'archive lag (0: none waiting).', '# TYPE ctl_l2_archive_oldest_pending_seconds gauge']
     out += ['ctl_l2_archive_oldest_pending_seconds{host_id="%s"} %d' % (r['host_id'], int(r['oldest_pending_age'] or 0))
-            for r in seen]
+            for r in queued]
     out += ['# HELP ctl_l2_archived_age_seconds Since the last segment was archived, by the database clock '
             '(-1: never).', '# TYPE ctl_l2_archived_age_seconds gauge']
     out += ['ctl_l2_archived_age_seconds{host_id="%s"} %d'

@@ -920,6 +920,19 @@ ctlplane drill ...`; the file goes when `ctl-secrets` next restarts or stops.
       gets `ctl_l2_archiver_report_timestamp_seconds`, 0 until it reports, so
       `L2ArchiverSilent` fires for it.
 
+77. **Codex review of 76**:
+    - **A slow repository read made a spent lease look usable**: `now` was
+      taken before minutes of `info` and `repo-ls`. The clock is read again
+      just before expire starts, and it starts only with more than its
+      5-minute timeout left.
+    - **db-1's clock set the lease's end**, and envelopes accept a db clock
+      ahead by up to their life: the end is now ctl-1's dispatch time plus the
+      lease's length (db-1 can't grant before it gets the request), by ctl-1's
+      clock only.
+    - **An agent from before the queue fields was refused at every poll**
+      (422, so it never got the hold either): `pending` is optional; without
+      it the queue series are absent, not 0 (migration 0020).
+
 ## Tests
 
 `tests/test_agent_api.py` runs the real `hostagent` Agent and Poller against

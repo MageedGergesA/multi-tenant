@@ -281,6 +281,15 @@ def test_db_1_reports_its_wal_archiver_with_a_poll(w, pki, api):
     assert post(api, '/v1/agents/%s/poll' % DB_HOST, {'wait': 0, 'capacity': 1, 'archiver': extra}, pki, 'db')[0] == 422
 
 
+def test_an_older_db_agent_without_the_queue_still_polls(w, pki, api):
+    """Codex: a report from before the queue fields made ctl-1 refuse the whole poll (422)."""
+    report = {'current_wal': '00000001000000020000003C', 'last_archived_wal': '00000001000000020000003B',
+              'last_archived_at': 1793190000.5, 'failed_count': 0, 'last_failed_at': None, 'at': 1793190030.0}
+    assert post(api, '/v1/agents/%s/poll' % DB_HOST, {'wait': 0, 'capacity': 1, 'archiver': report}, pki, 'db')[0] == 204
+    [row] = w.sql('SELECT pending, oldest_pending_age FROM db_archiver')
+    assert (row['pending'], row['oldest_pending_age']) == (None, None)
+
+
 def test_an_app_hosts_archiver_report_is_ignored(w, pki, api):
     report = {'current_wal': '00000001000000020000003C', 'last_archived_wal': None, 'last_archived_at': None,
               'failed_count': 0, 'last_failed_at': None, 'at': 1793190030.0, 'pending': 0, 'oldest_pending_age': None}

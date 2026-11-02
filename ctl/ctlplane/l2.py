@@ -21,16 +21,18 @@ EXPIRE_EVERY = 24 * 3600
 TIMEOUT = 600
 # pgBackRest's locks are local files, so db-1's backup and ctl-1's expire don't exclude each other;
 # an expire that loads backup.info before a backup completes and saves it after would drop that
-# backup and then remove its files as unlisted. The exclusion: every backup on db-1 holds a lock
-# (pgbackrest-scheduled), and before expire ctl-1 has db-1's agent take that lock for HOLD seconds
-# (L2.Hold, a signed internal operation); expire runs only inside the hold, with a timeout that ends
-# before it does. Also: only in hours away from db-1's schedule (01:00 UTC), and never while a
-# backup directory not in backup.info was written to recently (a backup in progress elsewhere).
+# backup and then remove its files as unlisted. The exclusion: before expire, ctl-1 has db-1's agent
+# write a lease of HOLD seconds under db-1's backup lock (L2.Hold, a signed internal operation), and
+# every backup there waits while a lease is in force (pgbackrest-scheduled); the lease is a file, so
+# an agent restart doesn't end it. The lease can't start before ctl-1 sent the request, so in
+# ctl-1's own clock it ends no earlier than dispatch + HOLD: no other clock is trusted. Expire starts
+# only if, read just before it starts, that end is more than EXPIRE_TIMEOUT + HOLD_MARGIN away, and
+# is killed at EXPIRE_TIMEOUT. Also: only in hours away from db-1's schedule (01:00 UTC), and never
+# while a backup directory not in backup.info was written to recently (a backup in progress).
 EXPIRE_HOURS = (10, 22)
 HOLD = 900
 EXPIRE_TIMEOUT = 300            # expire is killed past this: it must end inside the hold
 HOLD_MARGIN = 60                # and the hold outlast it by this much
-SKEW = 60                       # the hold's end is db-1's clock (the agent refuses envelopes skewed more)
 HOLD_RETRY = 600                # a refused or lost hold is asked for again after this
 RUNNING_FOR = 12 * 3600
 LABEL = re.compile(r'^\d{8}-\d{6}F(_\d{8}-\d{6}[DI])?$')
@@ -136,8 +138,8 @@ class L2:
         return out
 
     def hold(self, now) -> tuple[str | None, float]:
-        """db-1's backup lock for expire: (why to wait, None) or (None, seconds left in the hold).
-        Asks for one (L2.Hold) when there's none to use."""
+        """A lease on db-1's backups for expire: (why to wait, 0) or (None, the lease's end by
+        ctl-1's clock: dispatch + its seconds). Asks for one (L2.Hold) when there's none to use."""
         with self.store.connect() as c:
             db = c.execute("SELECT id FROM host WHERE role = 'db' AND state = 'active' ORDER BY id LIMIT 1").fetchone()
             if db is None:
@@ -147,10 +149,10 @@ class L2:
                            'ORDER BY o.created_at DESC LIMIT 1', (db['id'],)).fetchone()
         observed = (op['observed'] or {}) if op is not None else {}
         if op is not None and op['state'] == 'COMPLETED' and observed.get('held'):
-            # The end db-1 reported, less the clock skew allowed: a late response doesn't stretch it.
-            left = float(observed.get('until', 0)) - now - SKEW
-            if left > EXPIRE_TIMEOUT + HOLD_MARGIN:
-                return None, left
+            # db-1 granted it after it got the request: it ends no earlier than this, by our clock.
+            end = op['created_at'].timestamp() + op['params']['seconds']
+            if end - now > EXPIRE_TIMEOUT + HOLD_MARGIN:
+                return None, end
         if op is not None and op['state'] in ('DISPATCHED', 'APPLYING', 'RECONCILING'):
             return 'L2 hold pending on db-1', 0
         if op is not None and now - op['created_at'].timestamp() < HOLD_RETRY:
@@ -162,15 +164,15 @@ class L2:
         return 'L2 hold requested from db-1', 0
 
     def may_expire(self, now) -> tuple[str | None, float]:
-        """(why expire must wait now, None) or (None, the timeout expire must finish within)."""
+        """(why expire must wait now, 0) or (None, the time by ctl-1's clock expire must have ended by)."""
         hour = datetime.fromtimestamp(now, timezone.utc).hour
         if not self.expire_hours[0] <= hour < self.expire_hours[1]:
             return 'outside %02d:00-%02d:00 UTC' % self.expire_hours, 0
         running = self.running_backups(self._info(), now)
         if running:
             return 'backup in progress: %s' % ', '.join(running), 0
-        wait, left = self.hold(now)
-        return (wait, 0) if wait else (None, min(EXPIRE_TIMEOUT, left - HOLD_MARGIN))
+        wait, end = self.hold(now)
+        return (wait, 0) if wait else (None, end - HOLD_MARGIN)
 
     def read(self) -> dict:
         info = self._info()
@@ -189,11 +191,16 @@ class L2:
         errors, expired = [], None
         if last_expire is None or now - last_expire >= self.expire_every:
             try:
-                wait, within = self.may_expire(now)
+                wait, by = self.may_expire(now)
+                if not wait:
+                    # The clock again: the repository reads above may have taken minutes.
+                    left = by - self.clock()
+                    if left < EXPIRE_TIMEOUT:
+                        wait = 'the L2 lease ends too soon (%ds left)' % left
                 if wait:
                     log.info('l2: expire waits (%s)', wait)
                 else:
-                    self._cmd('expire', timeout=within)
+                    self._cmd('expire', timeout=EXPIRE_TIMEOUT)
                     expired = now
             except L2Error as e:
                 errors.append(str(e))
