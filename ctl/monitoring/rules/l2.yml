@@ -5,28 +5,27 @@
 groups:
   - name: l2
     rules:
-      # The archive lag itself, from db-1's pg_stat_archiver (reported with each agent poll):
-      # stuck (a finished segment waits and nothing was archived for 5 minutes), or behind (a
-      # backlog that doesn't drain: old segments uploading late still count).
+      # The archive lag itself, from db-1's WAL archiver (reported with each agent poll): the oldest
+      # finished segment still waiting (.ready) is the lag; its count is pressure on its own.
       - alert: L2WalArchiveLag
-        expr: ctl_l2_archived_age_seconds > 5 * 60 and ctl_l2_archive_backlog_segments >= 1
+        expr: ctl_l2_archive_oldest_pending_seconds > 5 * 60
         labels:
           severity: sev2
           runbook: RB-08
         annotations:
-          summary: "WAL archiving stuck on db-1 ({{ $labels.host_id }})"
-          description: "Finished WAL segments are waiting and none was archived for {{ $value | humanizeDuration }}: archive-push is failing (pg_stat_archiver). The cluster-loss RPO grows with it."
+          summary: "WAL archive lag over 5 minutes on db-1 ({{ $labels.host_id }})"
+          description: "The oldest WAL segment waiting to be archived finished {{ $value | humanizeDuration }} ago. The cluster-loss RPO is at least that."
       - alert: L2WalArchiveBacklog
-        expr: ctl_l2_archive_backlog_segments >= 5
+        expr: ctl_l2_archive_pending_segments >= 5
         for: 5m
         labels:
-          severity: sev2
+          severity: sev3
           runbook: RB-08
         annotations:
-          summary: "WAL archive behind on db-1 ({{ $labels.host_id }})"
-          description: "{{ $value }} finished WAL segments not archived for 5 minutes: archiving is slower than the writes, and the archive is that far behind the database."
+          summary: "WAL archive backlog on db-1 ({{ $labels.host_id }})"
+          description: "{{ $value }} finished WAL segments waiting to be archived for 5 minutes: archiving is slower than the writes."
       - alert: L2WalNeverArchived
-        expr: ctl_l2_archive_backlog_segments < 0
+        expr: ctl_l2_archived_age_seconds < 0
         for: 10m
         labels:
           severity: sev2
@@ -36,12 +35,13 @@ groups:
           description: "pg_stat_archiver shows no archived segment: archive_mode or archive_command isn't working."
       - alert: L2ArchiverSilent
         expr: time() - ctl_l2_archiver_report_timestamp_seconds > 10 * 60
+        for: 2m
         labels:
           severity: sev2
           runbook: RB-08
         annotations:
-          summary: "db-1 stopped reporting its WAL archiver ({{ $labels.host_id }})"
-          description: "No archiver report with db-1's polls for {{ $value | humanizeDuration }}: the archive lag alerts are blind (agentd down, or its query failing)."
+          summary: "db-1 isn't reporting its WAL archiver ({{ $labels.host_id }})"
+          description: "No archiver report with db-1's polls for {{ $value | humanizeDuration }} (or never): the archive lag alerts are blind (agentd down, an old agent, or its query failing)."
       # The repository end to end: the newest segment stored in bucket B (db-1's check timer
       # switches WAL every 2 minutes). Late uploads of old segments keep this fresh: the lag
       # alerts above are the ones that see that.

@@ -4,9 +4,14 @@ full and a differential never compete for the backup lock after downtime (DOC-05
 differential the other days). Full on the full day, or when the cluster now in use has no full
 newer than FULL_EVERY; differential otherwise.
 
-    pgbackrest-scheduled --stanza main --full-day 6       (0 = Monday ... 6 = Sunday, UTC)
+    pgbackrest-scheduled --stanza main --full-day 6 --lock /var/lib/pgbackrest-lock/backup.lock
+
+The backup runs holding `--lock` (flock), which the db agent takes while ctl-1 expires
+(L2.Hold): pgBackRest's own locks are per host, so this keeps the two apart. Taken by a hold,
+it waits up to `--lock-wait` seconds, then fails (and the unit retries).
 """
 import argparse
+import fcntl
 import json
 import os
 import subprocess
@@ -26,11 +31,28 @@ def choose(info: dict | None, now: float, full_day: int) -> str:
     return 'full' if not fulls or now - max(fulls) >= FULL_EVERY else 'diff'
 
 
+def take(path: str, wait: float) -> int:
+    fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    deadline = time.monotonic() + wait
+    while True:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return fd
+        except BlockingIOError:
+            if time.monotonic() >= deadline:
+                os.close(fd)
+                raise SystemExit('pgbackrest-scheduled: %s held for %ds (an L2 hold for expire?)' % (path, wait))
+            time.sleep(5)
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(prog='pgbackrest-scheduled')
     p.add_argument('--stanza', required=True)
     p.add_argument('--full-day', type=int, default=6, choices=range(7))
+    p.add_argument('--lock', required=True)
+    p.add_argument('--lock-wait', type=float, default=3600)
     args = p.parse_args(argv)
+    take(args.lock, args.lock_wait)       # held until this process exits
     run = subprocess.run(['pgbackrest', '--stanza=%s' % args.stanza, '--output=json', 'info'],
                          capture_output=True, text=True)
     try:
@@ -39,7 +61,8 @@ def main(argv=None) -> int:
         info = None
     kind = choose(info, time.time(), args.full_day)
     print('pgbackrest-scheduled: %s backup' % kind, flush=True)
-    os.execvp('pgbackrest', ['pgbackrest', '--stanza=%s' % args.stanza, '--type=%s' % kind, 'backup'])
+    # A child, not exec: the lock stays with this process for the whole backup.
+    return subprocess.run(['pgbackrest', '--stanza=%s' % args.stanza, '--type=%s' % kind, 'backup']).returncode
 
 
 if __name__ == '__main__':

@@ -43,7 +43,8 @@ def _db(raw):
     db = raw['db']
     backend = PgBackend(DbHostConfig(
         dsn=db.get('dsn', 'host=/var/run/postgresql dbname=postgres user=postgres'), hba_dir=Path(db['hba_dir']),
-        hba_method=db.get('hba_method', 'hostssl'), hba_cidr_override=db.get('hba_cidr_override', '')))
+        hba_method=db.get('hba_method', 'hostssl'), hba_cidr_override=db.get('hba_cidr_override', ''),
+        **({'l2_lock': Path(db['l2_lock'])} if db.get('l2_lock') else {})))
     executor = Executor('db', backend, AuditLog(Path(raw['audit_log'])))
     executor.startup()
     server = ExecServer(Path(raw['socket']), executor, owner_gid=raw['owner_gid'])

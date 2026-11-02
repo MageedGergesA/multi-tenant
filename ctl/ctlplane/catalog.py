@@ -27,8 +27,9 @@ STEPS = {
     'Host.Drain': ('any.drain',),
     'Host.RotateTrust': ('any.rotate_trust',),
     'Agent.Query': ('any.query',),      # read-back probes (reconciler.py)
+    'L2.Hold': ('db.l2_hold',),         # db-1's backup lock for ctl-1's expire (l2.py)
 }
-NOT_EXCLUSIVE = ('Tenant.MeterSeats', 'Agent.Query')
+NOT_EXCLUSIVE = ('Tenant.MeterSeats', 'Agent.Query', 'L2.Hold')
 PARAMS = {k: v for k, v in json.loads((Path(__file__).parent / 'params.schema.json').read_text()).items()
           if not k.startswith('_')}
 RELEASE_MANIFEST = {k: v for k, v in json.loads((Path(__file__).parent / 'release_manifest.schema.json').read_text()
@@ -42,6 +43,7 @@ AGENT_TIMEOUT = {
     'app.update_modules': 3600,
     **dict.fromkeys(('app.backup', 'app.restore_copy', 'app.export'), 7200),
     'app.health': 180,
+    'db.l2_hold': 30,
 }
 LEASE = {
     **dict.fromkeys(('app.start', 'app.stop', 'app.suspend', 'app.reactivate', 'app.container', 'app.swap',
@@ -95,8 +97,8 @@ NEEDS_RELEASE = ('Tenant.Create', 'Tenant.ApplyPatch', 'Tenant.ModuleUpdate', 'T
 # mail.user would take the relay password, but the mail agent defines neither the step nor its secrets yet.
 SECRET_STEPS = ('db.provision', 'app.config', 'app.start', 'app.backup', 'db.provision_copy', 'app.restore_copy',
                 'db.rotate', 'app.rotate', 'mail.rotate')
-HOST_SCOPED = ('Host.Drain', 'Host.RotateTrust')
-INTERNAL = ('Agent.Query',)     # the reconciler's probes, never requested
+HOST_SCOPED = ('Host.Drain', 'Host.RotateTrust', 'L2.Hold')
+INTERNAL = ('Agent.Query', 'L2.Hold')     # the reconciler's probes and the L2 worker's hold, never requested
 # They need a runtime slot (container_uid, ports) and capacity allocated by ctl-1 (INV-8, INV-13).
 SLOT_ALLOCATION = ('Tenant.Relocate',)
 ALLOCATING = ('Tenant.Create', 'Tenant.RestoreToIsolated')     # ctl-1 places them and fills in the slot

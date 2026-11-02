@@ -262,6 +262,20 @@ unit never sees its device: the Volume's mount runs only on a real host
       retried after 30 minutes.
     - **A changed unit didn't reload systemd** (only a changed timer did).
     - WAL lag and backups from before a stanza-upgrade: ctl (README 75).
+18. Codex re-review of 17:
+    - **The window and the in-progress check didn't exclude anything**: a
+      backup could start right after the check. Now a lock does: every backup
+      runs holding `/var/lib/pgbackrest-lock/backup.lock` (`pgbackrest-scheduled`,
+      waiting up to an hour if it's taken), and before expire ctl-1 has db-1's
+      agent take it for 15 minutes (`L2.Hold`, a signed internal operation);
+      expire runs only inside that hold and is killed after 5 minutes, well
+      before it ends. The agent-exec unit may write only that directory more.
+      Left: a backup run by hand outside the unit doesn't take the lock (use
+      `systemctl start pgbackrest-backup`), and an agent-exec restart during a
+      hold drops it early.
+    - **The first version's timers survived an upgrade**: the role stops,
+      disables and removes `pgbackrest-{full,diff}.timer` and
+      `pgbackrest@.service` (the harness plants them and checks).
 
 ## Not built
 

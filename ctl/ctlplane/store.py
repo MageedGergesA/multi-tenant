@@ -79,14 +79,16 @@ class Store:
         at = lambda v: datetime.fromtimestamp(v, timezone.utc) if v is not None else None  # noqa: E731
         with self.connect() as c:
             c.execute("INSERT INTO db_archiver (host_id, reported_at, db_at, current_wal, last_archived_wal, "
-                      "last_archived_at, failed_count, last_failed_at) "
-                      "SELECT id, %s, %s, %s, %s, %s, %s, %s FROM host WHERE id = %s AND role = 'db' "
+                      "last_archived_at, failed_count, last_failed_at, pending, oldest_pending_age) "
+                      "SELECT id, %s, %s, %s, %s, %s, %s, %s, %s, %s FROM host WHERE id = %s AND role = 'db' "
                       "ON CONFLICT (host_id) DO UPDATE SET reported_at = EXCLUDED.reported_at, db_at = EXCLUDED.db_at, "
                       "current_wal = EXCLUDED.current_wal, last_archived_wal = EXCLUDED.last_archived_wal, "
                       "last_archived_at = EXCLUDED.last_archived_at, failed_count = EXCLUDED.failed_count, "
-                      "last_failed_at = EXCLUDED.last_failed_at",
+                      "last_failed_at = EXCLUDED.last_failed_at, pending = EXCLUDED.pending, "
+                      "oldest_pending_age = EXCLUDED.oldest_pending_age",
                       (_ts(self.clock()), at(a['at']), a['current_wal'], a['last_archived_wal'],
-                       at(a['last_archived_at']), a['failed_count'], at(a['last_failed_at']), host_id))
+                       at(a['last_archived_at']), a['failed_count'], at(a['last_failed_at']), a['pending'],
+                       a['oldest_pending_age'], host_id))
             c.commit()
 
     def _agent_key(self, c, host_id) -> VerifyKey | None:

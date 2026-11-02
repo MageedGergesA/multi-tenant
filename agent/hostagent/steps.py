@@ -75,6 +75,12 @@ def drain(agent, env):
     return {'draining': True}
 
 
+def l2_hold(agent, env):
+    """L2.Hold: db-1's backup lock held for ctl-1's expire (pgBackRest's own locks are per host).
+    `held` false: a backup holds it now; ctl-1 asks again later."""
+    return agent.exec.call('pg.l2_hold', seconds=env['params']['seconds'])
+
+
 def rotate_trust(agent, env):
     """Host.RotateTrust: pin the new keys (already checked in envelope.py) on
     disk, where config.load checks them again at every start, then in memory."""
@@ -664,5 +670,6 @@ HANDLERS = {
     ('Tenant.Start', 'app.start'): start,
     ('Tenant.Stop', 'app.stop'): stop,
     ('Host.Drain', 'any.drain'): drain,
+    ('L2.Hold', 'db.l2_hold'): l2_hold,
     ('Host.RotateTrust', 'any.rotate_trust'): rotate_trust,
 }

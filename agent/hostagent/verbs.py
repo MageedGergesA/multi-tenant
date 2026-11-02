@@ -227,6 +227,11 @@ def restore_load(args):
     return {'sid': _sid(args), 'backup_id': _uuid(args['backup_id'], 'backup_id'), 'digest': _digest(args['digest'])}
 
 
+def l2_hold(args):
+    _keys(args, 'seconds')
+    return {'seconds': _int(args['seconds'], 60, 3600, 'seconds')}
+
+
 def no_args(args):
     _keys(args)
     return {}
@@ -251,7 +256,7 @@ DB = {
     'pg.hba_add': pg_hba_add, 'pg.hba_remove': sid_only, 'pg.reload': no_args,
     'pg.rotate_password': pg_create_role, 'pg.terminate_sessions': sid_only,
     'pg.drop_db': sid_only, 'pg.drop_role': sid_only, 'pg.connection_stats': no_args, 'pg.inspect': sid_only,
-    'pg.archiver': no_args,
+    'pg.archiver': no_args, 'pg.l2_hold': l2_hold,
 }
 BY_ROLE = {'app': APP, 'db': DB, 'mail': {}}
 

@@ -43,3 +43,18 @@ def test_no_full_of_the_current_cluster_is_full():
 def test_unreadable_repository_tries_a_full():
     assert sched.choose(None, SUNDAY + DAY, 6) == 'full'
     assert sched.choose(info((SUNDAY, 1), code=1), SUNDAY + DAY, 6) == 'full'
+
+
+def test_a_backup_waits_for_a_hold_then_gives_up(tmp_path):
+    """The db agent's L2.Hold has the lock: the backup doesn't start (and fails when the wait ends)."""
+    import fcntl
+    import os
+    import pytest
+    lock = str(tmp_path / 'backup.lock')
+    holder = os.open(lock, os.O_RDWR | os.O_CREAT, 0o600)
+    fcntl.flock(holder, fcntl.LOCK_EX)
+    with pytest.raises(SystemExit, match='held'):
+        sched.take(lock, 0.1)
+    os.close(holder)
+    fd = sched.take(lock, 0.1)
+    os.close(fd)

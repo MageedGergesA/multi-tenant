@@ -21,10 +21,17 @@ EXPIRE_EVERY = 24 * 3600
 TIMEOUT = 600
 # pgBackRest's locks are local files, so db-1's backup and ctl-1's expire don't exclude each other;
 # an expire that loads backup.info before a backup completes and saves it after would drop that
-# backup and then remove its files as unlisted. Expire runs only in hours away from db-1's
-# schedule (01:00 UTC), and never while a backup directory not yet in backup.info was written to
-# recently (a backup in progress; an older one is abandoned, and expire may remove it).
+# backup and then remove its files as unlisted. The exclusion: every backup on db-1 holds a lock
+# (pgbackrest-scheduled), and before expire ctl-1 has db-1's agent take that lock for HOLD seconds
+# (L2.Hold, a signed internal operation); expire runs only inside the hold, with a timeout that ends
+# before it does. Also: only in hours away from db-1's schedule (01:00 UTC), and never while a
+# backup directory not in backup.info was written to recently (a backup in progress elsewhere).
 EXPIRE_HOURS = (10, 22)
+HOLD = 900
+EXPIRE_TIMEOUT = 300            # expire is killed past this: it must end inside the hold
+HOLD_MARGIN = 60                # and the hold outlast it by this much
+SKEW = 60                       # the hold's end is db-1's clock (the agent refuses envelopes skewed more)
+HOLD_RETRY = 600                # a refused or lost hold is asked for again after this
 RUNNING_FOR = 12 * 3600
 LABEL = re.compile(r'^\d{8}-\d{6}F(_\d{8}-\d{6}[DI])?$')
 
@@ -90,10 +97,10 @@ class L2:
         self.clock = clock
         self.run = run
 
-    def _cmd(self, *args) -> str:
+    def _cmd(self, *args, timeout=TIMEOUT) -> str:
         try:
             done = self.run([*self.pgbackrest, '--stanza=%s' % self.stanza, *args], capture_output=True, text=True,
-                            timeout=TIMEOUT, env=self.env)
+                            timeout=timeout, env=self.env)
         except (OSError, subprocess.TimeoutExpired) as e:
             raise L2Error('pgbackrest %s: %s' % (args[-1], type(e).__name__)) from None
         if done.returncode != 0:
@@ -128,13 +135,42 @@ class L2:
                 out.append(name)
         return out
 
-    def may_expire(self, now) -> str | None:
-        """Why expire must wait now, or None."""
+    def hold(self, now) -> tuple[str | None, float]:
+        """db-1's backup lock for expire: (why to wait, None) or (None, seconds left in the hold).
+        Asks for one (L2.Hold) when there's none to use."""
+        with self.store.connect() as c:
+            db = c.execute("SELECT id FROM host WHERE role = 'db' AND state = 'active' ORDER BY id LIMIT 1").fetchone()
+            if db is None:
+                return 'no active db host', 0
+            op = c.execute("SELECT o.id, o.state, o.params, o.created_at, s.observed FROM operation o "
+                           "JOIN operation_step s ON s.operation_id = o.id WHERE o.type = 'L2.Hold' AND o.host_id = %s "
+                           'ORDER BY o.created_at DESC LIMIT 1', (db['id'],)).fetchone()
+        observed = (op['observed'] or {}) if op is not None else {}
+        if op is not None and op['state'] == 'COMPLETED' and observed.get('held'):
+            # The end db-1 reported, less the clock skew allowed: a late response doesn't stretch it.
+            left = float(observed.get('until', 0)) - now - SKEW
+            if left > EXPIRE_TIMEOUT + HOLD_MARGIN:
+                return None, left
+        if op is not None and op['state'] in ('DISPATCHED', 'APPLYING', 'RECONCILING'):
+            return 'L2 hold pending on db-1', 0
+        if op is not None and now - op['created_at'].timestamp() < HOLD_RETRY:
+            # Refused (a backup holds the lock), failed, or used up: not again at once.
+            return ('backup running on db-1' if op['state'] == 'COMPLETED' and not observed.get('held')
+                    else 'L2 hold %s' % op['state'].lower()), 0
+        self.store.dispatch('L2.Hold', tenant_id=None, environment_id=None, params={'seconds': HOLD},
+                            hosts={'db': str(db['id'])}, idempotency_key='l2-hold-%d' % int(now))
+        return 'L2 hold requested from db-1', 0
+
+    def may_expire(self, now) -> tuple[str | None, float]:
+        """(why expire must wait now, None) or (None, the timeout expire must finish within)."""
         hour = datetime.fromtimestamp(now, timezone.utc).hour
         if not self.expire_hours[0] <= hour < self.expire_hours[1]:
-            return 'outside %02d:00-%02d:00 UTC' % self.expire_hours
+            return 'outside %02d:00-%02d:00 UTC' % self.expire_hours, 0
         running = self.running_backups(self._info(), now)
-        return 'backup in progress: %s' % ', '.join(running) if running else None
+        if running:
+            return 'backup in progress: %s' % ', '.join(running), 0
+        wait, left = self.hold(now)
+        return (wait, 0) if wait else (None, min(EXPIRE_TIMEOUT, left - HOLD_MARGIN))
 
     def read(self) -> dict:
         info = self._info()
@@ -153,11 +189,11 @@ class L2:
         errors, expired = [], None
         if last_expire is None or now - last_expire >= self.expire_every:
             try:
-                wait = self.may_expire(now)
+                wait, within = self.may_expire(now)
                 if wait:
                     log.info('l2: expire waits (%s)', wait)
                 else:
-                    self._cmd('expire')
+                    self._cmd('expire', timeout=within)
                     expired = now
             except L2Error as e:
                 errors.append(str(e))

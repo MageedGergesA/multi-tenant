@@ -11,7 +11,9 @@ StartLimitBurst=4
 Type=oneshot
 User=postgres
 Group=postgres
-ExecStart=/usr/local/sbin/pgbackrest-scheduled --stanza {{ pgbackrest_stanza }} --full-day {{ pgbackrest_full_day }}
+ExecStart=/usr/local/sbin/pgbackrest-scheduled --stanza {{ pgbackrest_stanza }} --full-day {{ pgbackrest_full_day }} \
+  --lock {{ pgbackrest_lock }} --lock-wait {{ pgbackrest_lock_wait }}
+ReadWritePaths={{ pgbackrest_lock | dirname }}
 Restart=on-failure
 RestartSec={{ pgbackrest_retry_after }}
 NoNewPrivileges=yes

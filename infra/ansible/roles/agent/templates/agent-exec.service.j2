@@ -26,7 +26,7 @@ PrivateTmp=yes
 ProtectHome=yes
 {% if agent_role == 'db' %}
 ProtectSystem=strict
-ReadWritePaths={{ agent_db_hba_dir }} /var/log/agent-exec
+ReadWritePaths={{ agent_db_hba_dir }} /var/log/agent-exec -{{ agent_db_l2_lock | dirname }}
 CapabilityBoundingSet=
 RestrictAddressFamilies=AF_UNIX
 SystemCallFilter=@system-service

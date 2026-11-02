@@ -7,7 +7,11 @@ the SCRAM verifier, validated by verbs.py and passed as a literal.
 `pg_hba.conf` ends with `include_dir` (PostgreSQL 16+) pointing at `hba_dir`,
 followed by a final reject; one file per tenant lives there.
 """
+import fcntl
+import os
 import re
+import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -23,11 +27,15 @@ class DbHostConfig:
     hba_dir: Path
     hba_method: str = 'hostssl'      # 'host' only on a development host without TLS
     hba_cidr_override: str = ''      # dev only: Docker bridge range instead of the app host /32
+    # The lock every backup takes (pgbackrest-scheduled) and L2.Hold takes for ctl-1's expire.
+    l2_lock: Path = Path('/var/lib/pgbackrest-lock/backup.lock')
 
 
 class PgBackend:
     def __init__(self, config: DbHostConfig):
         self.c = config
+        self._hold = None               # (fd, timer) while L2.Hold has the backup lock
+        self._hold_lock = threading.Lock()
 
     def _conn(self, dbname=None):
         conn = psycopg.connect(self.c.dsn, autocommit=True, **({'dbname': dbname} if dbname else {}))
@@ -124,6 +132,33 @@ class PgBackend:
             max_conn = int(conn.execute('SHOW max_connections').fetchone()[0])
         return {'max_connections': max_conn, 'per_db': dict(rows)}
 
+    def pg_l2_hold(self, seconds):
+        """Take the backup lock for `seconds` (released by a timer, or with this process): no backup
+        starts on db-1 meanwhile, so ctl-1's expire can't drop one it is finishing. Not taken while a
+        backup holds it. Taken again (a new lease) if this process already holds it."""
+        with self._hold_lock:
+            if self._hold is not None:
+                self._hold[1].cancel()
+                fd = self._hold[0]
+            else:
+                fd = os.open(self.c.l2_lock, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    os.close(fd)
+                    return {'held': False}
+            timer = threading.Timer(seconds, self._release_hold)
+            timer.daemon = True
+            timer.start()
+            self._hold = (fd, timer)
+        return {'held': True, 'seconds': seconds, 'until': time.time() + seconds}
+
+    def _release_hold(self):
+        with self._hold_lock:
+            if self._hold is not None:
+                os.close(self._hold[0])         # closing releases the flock
+                self._hold = None
+
     def pg_archiver(self):
         """WAL archiving as PostgreSQL sees it (pg_stat_archiver), for ctl-1's L2 lag alert: the
         segment being written and the last one archived (DOC-05 §8). Times are the server's."""
@@ -132,10 +167,16 @@ class PgBackend:
                              "EXTRACT(EPOCH FROM last_archived_time)::float8, failed_count, "
                              "EXTRACT(EPOCH FROM last_failed_time)::float8, EXTRACT(EPOCH FROM now())::float8 "
                              "FROM pg_stat_archiver").fetchone()
+            # The queue itself: a `.ready` file per finished segment not archived yet, dated when it
+            # was finished. The oldest one's age is the archive lag (pg_stat_archiver's last
+            # archived name says nothing about older files left behind, e.g. around a promotion).
+            q = conn.execute("SELECT count(*), EXTRACT(EPOCH FROM now() - min(modification))::float8 "
+                             "FROM pg_ls_archive_statusdir() WHERE name LIKE '%.ready'").fetchone()
         last = r[1] if r[1] and re.match(r'^[0-9A-F]{24}', r[1]) else None
         # A `.backup` or `.partial` file names its segment first; a `.history` file names none.
         return {'current_wal': r[0], 'last_archived_wal': last[:24] if last else None, 'last_archived_at': r[2],
-                'failed_count': int(r[3]), 'last_failed_at': r[4], 'at': r[5]}
+                'failed_count': int(r[3]), 'last_failed_at': r[4], 'at': r[5],
+                'pending': int(q[0]), 'oldest_pending_age': q[1]}
 
     def pg_inspect(self, sid):
         db, role = naming.db_name(sid), naming.db_role(sid)

@@ -58,6 +58,13 @@ class FakeBackrest:
         return subprocess.CompletedProcess(args, 0, out, '')
 
 
+def _l2(w, run):
+    """An L2 worker whose db-1 hold is granted (its own tests are below)."""
+    l2 = L2(w.store, run=run, clock=w.clock)
+    l2.hold = lambda now: (None, 900)
+    return l2
+
+
 def _row(w):
     [r] = w.sql('SELECT * FROM l2_status')
     return r
@@ -92,7 +99,7 @@ def test_a_stanza_in_error_is_an_error():
 def test_run_records_reads_and_expires_once_a_day(w):
     w.clock.t = NOON
     run = FakeBackrest()
-    l2 = L2(w.store, run=run, clock=w.clock)
+    l2 = _l2(w, run)
     l2.run_once()
     r = _row(w)
     assert (r['full_at'].timestamp(), r['backup_at'].timestamp(), r['wal_at'].timestamp()) == \
@@ -112,7 +119,7 @@ def test_run_records_reads_and_expires_once_a_day(w):
 def test_a_failed_read_keeps_what_was_read_and_says_why(w):
     w.clock.t = NOON
     run = FakeBackrest()
-    l2 = L2(w.store, run=run, clock=w.clock)
+    l2 = _l2(w, run)
     l2.run_once()
     before = _row(w)
     run.fail.add('info')
@@ -128,7 +135,7 @@ def test_a_failed_expire_is_retried_and_the_read_still_counts(w):
     w.clock.t = NOON
     run = FakeBackrest()
     run.fail.add('expire')
-    l2 = L2(w.store, run=run, clock=w.clock)
+    l2 = _l2(w, run)
     with pytest.raises(L2Error, match='expire'):
         l2.run_once()
     r = _row(w)
@@ -148,7 +155,7 @@ def test_metrics_for_a_configured_stanza_never_read_are_zero(w):
 
 def test_metrics_are_bounded_by_now(w):
     w.clock.t = 1793190900
-    L2(w.store, run=FakeBackrest(), clock=w.clock).run_once()
+    _l2(w, FakeBackrest()).run_once()
     with w.store.connect() as c:
         text = monitoring.metrics(c, w.clock(), l2_stanzas=['main'])
     assert 'ctl_l2_wal_last_timestamp_seconds{stanza="main"} 1793190808' in text
@@ -182,7 +189,7 @@ def test_expire_waits_for_a_backup_in_progress_on_db_1(w):
     run = FakeBackrest()
     run.backups['20261028-113000F_20261028-110000D'] = {'type': 'path'}
     run.inside['20261028-113000F_20261028-110000D'] = {'backup.manifest.copy': {'type': 'file', 'time': NOON - 3600}}
-    l2 = L2(w.store, run=run, clock=w.clock)
+    l2 = _l2(w, run)
     l2.run_once()
     assert _expires(run) == 0 and _row(w)['expired_at'] is None and _row(w)['error'] is None
     run.info = dict(INFO, backup=INFO['backup'] + [dict(INFO['backup'][1], label='20261028-113000F_20261028-110000D')])
@@ -196,7 +203,7 @@ def test_an_abandoned_backup_directory_doesnt_block_expire(w):
     run = FakeBackrest()
     run.backups['20261020-010000F'] = {'type': 'path'}
     run.inside['20261020-010000F'] = {'backup.manifest.copy': {'type': 'file', 'time': NOON - 8 * 86400}}
-    L2(w.store, run=run, clock=w.clock).run_once()
+    _l2(w, run).run_once()
     assert _expires(run) == 1
 
 
@@ -204,7 +211,7 @@ def test_expire_waits_outside_its_hours(w):
     """db-1's backups start at 01:00 UTC: no expire then."""
     w.clock.t = datetime(2026, 10, 28, 1, 30, tzinfo=timezone.utc).timestamp()
     run = FakeBackrest()
-    l2 = L2(w.store, run=run, clock=w.clock)
+    l2 = _l2(w, run)
     l2.run_once()
     assert _expires(run) == 0 and _row(w)['wal_at']            # still read
     w.clock.t = NOON
@@ -212,15 +219,12 @@ def test_expire_waits_outside_its_hours(w):
     assert _expires(run) == 1
 
 
-# -- db-1's archiver (Codex P2: the lag itself, not the newest upload) -----------------------
+# -- db-1's archiver (Codex: the queue itself, and hosts that never reported) ------------------
 
 def _report(**over):
     return dict({'current_wal': '00000001000000020000003C', 'last_archived_wal': '00000001000000020000003B',
-                 'last_archived_at': NOON - 30, 'failed_count': 0, 'last_failed_at': None, 'at': NOON}, **over)
-
-
-def test_segments_across_a_log_file_boundary():
-    assert monitoring.wal_segments('000000010000000300000000') - monitoring.wal_segments('0000000100000002000000FF') == 1
+                 'last_archived_at': NOON - 30, 'failed_count': 0, 'last_failed_at': None, 'at': NOON,
+                 'pending': 0, 'oldest_pending_age': None}, **over)
 
 
 def _metrics(w):
@@ -228,21 +232,32 @@ def _metrics(w):
         return monitoring.metrics(c, w.clock())
 
 
-def test_archiver_report_up_to_date_has_no_backlog(w):
+def test_archiver_up_to_date(w):
     from .conftest import DB_HOST
     w.clock.t = NOON
     w.store.record_archiver(DB_HOST, _report())
     text = _metrics(w)
-    assert 'ctl_l2_archive_backlog_segments{host_id="%s"} 0' % DB_HOST in text
+    assert 'ctl_l2_archive_pending_segments{host_id="%s"} 0' % DB_HOST in text
+    assert 'ctl_l2_archive_oldest_pending_seconds{host_id="%s"} 0' % DB_HOST in text
     assert 'ctl_l2_archived_age_seconds{host_id="%s"} 30' % DB_HOST in text
 
 
-def test_old_segments_archived_late_still_show_the_backlog(w):
-    """Archived 30 s ago, but 40 finished segments wait: the backlog metric says so."""
+def test_a_small_queue_that_never_drains_shows_its_age(w):
+    """Codex: four waiting, the oldest eight minutes old, one archived 30 s ago."""
     from .conftest import DB_HOST
     w.clock.t = NOON
-    w.store.record_archiver(DB_HOST, _report(current_wal='000000010000000200000064'))
-    assert 'ctl_l2_archive_backlog_segments{host_id="%s"} 40' % DB_HOST in _metrics(w)
+    w.store.record_archiver(DB_HOST, _report(pending=4, oldest_pending_age=480.4))
+    text = _metrics(w)
+    assert 'ctl_l2_archive_pending_segments{host_id="%s"} 4' % DB_HOST in text
+    assert 'ctl_l2_archive_oldest_pending_seconds{host_id="%s"} 480' % DB_HOST in text
+
+
+def test_a_db_host_that_never_reported_reads_0(w):
+    """Codex: no row, no series, no silence alert. Every active db host has a report time."""
+    from .conftest import DB_HOST
+    text = _metrics(w)
+    assert 'ctl_l2_archiver_report_timestamp_seconds{host_id="%s"} 0' % DB_HOST in text
+    assert 'ctl_l2_archive_pending_segments{host_id="%s"}' % DB_HOST not in text
 
 
 def test_never_archived_and_app_hosts_are_ignored(w):
@@ -251,6 +266,79 @@ def test_never_archived_and_app_hosts_are_ignored(w):
     w.store.record_archiver(DB_HOST, _report(last_archived_wal=None, last_archived_at=None))
     w.store.record_archiver(APP_HOST, _report())
     text = _metrics(w)
-    assert 'ctl_l2_archive_backlog_segments{host_id="%s"} -1' % DB_HOST in text
     assert 'ctl_l2_archived_age_seconds{host_id="%s"} -1' % DB_HOST in text
     assert APP_HOST not in text.split('ctl_l2_archiver_report')[1]
+
+
+# -- L2.Hold: db-1's backup lock around expire (Codex P1: real exclusion) -----------------------
+
+def _hold_op(w):
+    return w.sql("SELECT o.id, o.state, o.params, s.host_id FROM operation o JOIN operation_step s "
+                 "ON s.operation_id = o.id WHERE o.type = 'L2.Hold' ORDER BY o.created_at")
+
+
+def _answer(w, op_id, observed):
+    w.sql("UPDATE operation SET state = 'COMPLETED' WHERE id = %s", (op_id,))
+    w.sql("UPDATE operation_step SET state = 'done', observed = %s WHERE operation_id = %s",
+          (json.dumps(observed), op_id))
+
+
+def test_expire_runs_only_inside_a_hold_db_1_granted(w):
+    from .conftest import DB_HOST
+    w.clock.t = NOON
+    run = FakeBackrest()
+    l2 = L2(w.store, run=run, clock=w.clock)
+    l2.run_once()                                                   # asks db-1, doesn't expire
+    [op] = _hold_op(w)
+    assert (str(op['host_id']), op['params'], op['state'], _expires(run)) == (DB_HOST, {'seconds': 900}, 'DISPATCHED', 0)
+    w.clock.t += 60
+    l2.run_once()                                                   # still pending: no second hold
+    assert len(_hold_op(w)) == 1 and _expires(run) == 0
+    _answer(w, op['id'], {'held': True, 'seconds': 900, 'until': w.clock.t + 890})
+    w.clock.t += 5
+    timeouts = []
+    real = run.__call__
+
+    def spy(args, **kw):
+        if args[-1] == 'expire':
+            timeouts.append(kw['timeout'])
+        return real(args, **kw)
+    l2.run = spy
+    l2.run_once()
+    assert _expires(run) == 1 and timeouts == [300]                # killed before the hold ends
+
+
+def test_a_hold_refused_while_a_backup_runs_means_no_expire(w):
+    w.clock.t = NOON
+    run = FakeBackrest()
+    l2 = L2(w.store, run=run, clock=w.clock)
+    l2.run_once()
+    [op] = _hold_op(w)
+    _answer(w, op['id'], {'held': False})
+    w.clock.t += 120
+    l2.run_once()
+    assert _expires(run) == 0 and len(_hold_op(w)) == 1            # not asked again at once
+    w.clock.t += 600
+    l2.run_once()
+    assert len(_hold_op(w)) == 2                                    # asked again later
+
+
+def test_a_hold_too_close_to_its_end_isnt_used(w):
+    """The end is db-1's clock less the skew allowed; expire needs 5 min plus a margin inside it."""
+    w.clock.t = NOON
+    run = FakeBackrest()
+    l2 = L2(w.store, run=run, clock=w.clock)
+    l2.run_once()
+    [op] = _hold_op(w)
+    _answer(w, op['id'], {'held': True, 'seconds': 900, 'until': w.clock.t + 400})
+    w.clock.t += 700
+    l2.run_once()
+    assert _expires(run) == 0 and len(_hold_op(w)) == 2
+
+
+def test_no_db_host_no_expire(w):
+    w.clock.t = NOON
+    w.sql("UPDATE host SET state = 'retired' WHERE role = 'db'")
+    run = FakeBackrest()
+    L2(w.store, run=run, clock=w.clock).run_once()
+    assert _expires(run) == 0 and _hold_op(w) == []

@@ -26,3 +26,7 @@ pgbackrest_backup_on: "*-*-* 01:00:00 UTC"
 pgbackrest_full_day: 6
 pgbackrest_retry_after: 30min
 pgbackrest_check_on: "*:0/2"
+# Every backup holds it (pgbackrest-scheduled); the db agent takes it for ctl-1's expire (L2.Hold):
+# pgBackRest's own locks are per host, so this is what keeps backup and expire apart.
+pgbackrest_lock: /var/lib/pgbackrest-lock/backup.lock
+pgbackrest_lock_wait: 3600

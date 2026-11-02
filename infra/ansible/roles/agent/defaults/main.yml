@@ -17,6 +17,8 @@ agent_registry_host: ""
 agent_enroll_token_file: ""
 agent_workers: 4
 agent_db_hba_dir: "/etc/postgresql/16/main/hba.d"
+# The backup lock shared with pgbackrest-scheduled (role pgbackrest): L2.Hold takes it for ctl-1's expire.
+agent_db_l2_lock: "{{ pgbackrest_lock | default('/var/lib/pgbackrest-lock/backup.lock') }}"
 
 # -- role app (hostagent/backends.py AppHostConfig, hostagent/config.py) --------------------
 # Required on an app host: agent_app_db_host, db-1's private IP; agent_registry_host and

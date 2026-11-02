@@ -11,6 +11,7 @@ audit_log = "/var/log/agent-exec/audit.log"
 [db]
 hba_dir = "{{ agent_db_hba_dir }}"
 hba_method = "hostssl"
+l2_lock = "{{ agent_db_l2_lock }}"
 {% endif %}
 {% if agent_role == 'app' %}
 

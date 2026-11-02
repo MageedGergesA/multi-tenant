@@ -373,9 +373,13 @@ print(next((l[len(prefix):] for l in lines if l.startswith(prefix)), 'none'))" "
 }
 deadline=$((SECONDS + 200))
 until [ "$(l2_metric ctl_l2_full_last_timestamp_seconds)" -gt 0 ] 2>/dev/null || [ $SECONDS -gt $deadline ]; do sleep 5; done
+# Expire needs db-1's hold first (L2.Hold through the agent), then the next worker run: two of them.
+deadline=$((SECONDS + 420))
+until [ "$(l2_metric ctl_l2_expire_last_timestamp_seconds)" -gt 0 ] 2>/dev/null || [ $SECONDS -gt $deadline ]; do sleep 5; done
 check "ctl-1's l2 worker reads the full backup from bucket B" test "$(l2_metric ctl_l2_full_last_timestamp_seconds)" -gt 0
 check "and the newest WAL segment's time" test "$(l2_metric ctl_l2_wal_last_timestamp_seconds)" -gt 0
-check "and has run expire with its own key" test "$(l2_metric ctl_l2_expire_last_timestamp_seconds)" -gt 0
+check "and has run expire with its own key, inside a hold db-1's agent granted" test "$(l2_metric ctl_l2_expire_last_timestamp_seconds)" -gt 0
+check "the hold: an L2.Hold operation completed on db-1, held" sh -c "docker exec $NAME runuser -u postgres -- psql -d ctl -tAc \"SELECT o.state || ' ' || (s.observed->>'held') FROM operation o JOIN operation_step s ON s.operation_id = o.id WHERE o.type = 'L2.Hold' ORDER BY o.created_at DESC LIMIT 1\" | grep -qx 'COMPLETED true'"
 archiver_metric() {  # name -> its value for db-1 on ctl-1's /metrics ("none": absent)
     in_host python3 -c "import sys, urllib.request
 prefix = '%s{host_id=\"%s\"} ' % (sys.argv[1], sys.argv[2])
@@ -383,13 +387,22 @@ lines = urllib.request.urlopen('http://127.0.0.1:9464/metrics').read().decode().
 print(next((l[len(prefix):] for l in lines if l.startswith(prefix)), 'none'))" "$1" "$DB_HOST_ID"
 }
 deadline=$((SECONDS + 90))
-until [ "$(archiver_metric ctl_l2_archive_backlog_segments)" = "0" ] || [ $SECONDS -gt $deadline ]; do sleep 3; done
-check "db-1 reports its WAL archiver with its polls: no backlog" test "$(archiver_metric ctl_l2_archive_backlog_segments)" = "0"
+until [ "$(archiver_metric ctl_l2_archiver_report_timestamp_seconds)" -gt 0 ] 2>/dev/null || [ $SECONDS -gt $deadline ]; do sleep 3; done
+check "db-1 reports its WAL archiver with its polls" test "$(archiver_metric ctl_l2_archiver_report_timestamp_seconds)" -gt 0
+check "nothing waiting long (oldest pending segment under 5 minutes)" test "$(archiver_metric ctl_l2_archive_oldest_pending_seconds)" -lt 300
 check "and a segment archived (age known)" test "$(archiver_metric ctl_l2_archived_age_seconds)" -ge 0
 check "Prometheus on ctl-1 has the L2 rules" sh -c "docker exec $NAME python3 -c \"import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:9090/api/v1/rules').read().decode())\" | grep -q L2WalArchiveLag"
 if dbplay 3; then ok "db-1 run again"; else bad "db-1 run again failed"; tail -30 "$WORK/db3.log"; fi
 check "the second db-1 run changed nothing" grep -qE 'db-1 +: ok=[0-9]+ +changed=0 +unreachable=0 +failed=0' "$WORK/db3.log"
 grep -E 'changed:' "$WORK/db3.log" | head -5 || true
+# A host configured by the role's first version: a timer per backup type. The role retires them.
+in_db sh -c 'cp /etc/systemd/system/pgbackrest-backup.timer /etc/systemd/system/pgbackrest-full.timer \
+    && cp /etc/systemd/system/pgbackrest-backup.service /etc/systemd/system/pgbackrest@.service \
+    && systemctl daemon-reload && systemctl enable --now pgbackrest-full.timer' >/dev/null 2>&1
+if dbplay 4; then ok "db-1 run over the first version's timers"; else bad "db-1 run over the first version's timers"; tail -20 "$WORK/db4.log"; fi
+check "the first version's timer and template are gone" sh -c "! docker exec $DB test -e /etc/systemd/system/pgbackrest-full.timer \
+    && ! docker exec $DB test -e /etc/systemd/system/pgbackrest@.service && ! docker exec $DB systemctl is-active -q pgbackrest-full.timer"
+check "only the backup and check timers remain" test "$(in_db systemctl list-timers --all --no-legend 'pgbackrest*' | awk '{print $(NF-1)}' | sort | tr '\n' ' ')" = "pgbackrest-backup.timer pgbackrest-check.timer "
 
 echo "app-1: Docker with userns-remap, Traefik, the filestore Volume, enrolled and driven through its executor"
 # Privileged: Docker inside needs it (cgroups, namespaces, iptables); its storage on a volume, not overlayfs.

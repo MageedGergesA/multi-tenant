@@ -104,36 +104,34 @@ def l2_metrics(c, now, stanzas=()) -> list[str]:
     return out
 
 
-def wal_segments(name: str) -> int:
-    """A WAL file name's segment number (16 MB segments: 256 per log file), timeline aside."""
-    return int(name[8:16], 16) * 256 + int(name[16:24], 16)
-
-
 def archiver_metrics(c, now) -> list[str]:
-    """From db-1's pg_stat_archiver, reported with each poll: the backlog is the segments
-    finished but not archived (the one being written isn't due yet); -1 if none was ever
-    archived. The ages are relative to the database's own clock at the report, so skew
-    between the hosts doesn't move them."""
-    rows = c.execute("SELECT host_id, EXTRACT(EPOCH FROM reported_at) AS reported, current_wal, last_archived_wal, "
-                     "EXTRACT(EPOCH FROM db_at - last_archived_at) AS archived_age, failed_count, "
-                     "EXTRACT(EPOCH FROM db_at - last_failed_at) AS failed_age "
-                     "FROM db_archiver WHERE reported_at <= %s ORDER BY host_id", (now,)).fetchall()
-    out = ['# HELP ctl_l2_archiver_report_timestamp_seconds When db-1 last reported its WAL archiver (ctl-1 clock).',
-           '# TYPE ctl_l2_archiver_report_timestamp_seconds gauge']
+    """From db-1's WAL archiver, reported with each poll (pg_stat_archiver and the queue of `.ready`
+    files). Every active db host has a series: one that never reported reads 0 (its report time),
+    so the silence alert sees it. Ages are by the database's own clock at the report."""
+    rows = c.execute("SELECT h.id AS host_id, COALESCE(EXTRACT(EPOCH FROM a.reported_at), 0) AS reported, "
+                     "a.pending, a.oldest_pending_age, a.failed_count, "
+                     "EXTRACT(EPOCH FROM a.db_at - a.last_archived_at) AS archived_age "
+                     "FROM host h LEFT JOIN db_archiver a ON a.host_id = h.id AND a.reported_at <= %s "
+                     "WHERE h.role = 'db' AND h.state = 'active' ORDER BY h.id", (now,)).fetchall()
+    seen = [r for r in rows if r['reported']]
+    out = ['# HELP ctl_l2_archiver_report_timestamp_seconds When db-1 last reported its WAL archiver (ctl-1 '
+           'clock; 0: never).', '# TYPE ctl_l2_archiver_report_timestamp_seconds gauge']
     out += ['ctl_l2_archiver_report_timestamp_seconds{host_id="%s"} %d' % (r['host_id'], int(r['reported']))
             for r in rows]
-    out += ['# HELP ctl_l2_archive_backlog_segments WAL segments finished but not archived (-1: none ever archived).',
-            '# TYPE ctl_l2_archive_backlog_segments gauge']
-    out += ['ctl_l2_archive_backlog_segments{host_id="%s"} %d'
-            % (r['host_id'], max(0, wal_segments(r['current_wal']) - wal_segments(r['last_archived_wal']) - 1)
-               if r['last_archived_wal'] else -1) for r in rows]
+    out += ['# HELP ctl_l2_archive_pending_segments Finished WAL segments waiting to be archived (.ready files).',
+            '# TYPE ctl_l2_archive_pending_segments gauge']
+    out += ['ctl_l2_archive_pending_segments{host_id="%s"} %d' % (r['host_id'], r['pending']) for r in seen]
+    out += ['# HELP ctl_l2_archive_oldest_pending_seconds Age of the oldest segment waiting to be archived: the '
+            'archive lag (0: none waiting).', '# TYPE ctl_l2_archive_oldest_pending_seconds gauge']
+    out += ['ctl_l2_archive_oldest_pending_seconds{host_id="%s"} %d' % (r['host_id'], int(r['oldest_pending_age'] or 0))
+            for r in seen]
     out += ['# HELP ctl_l2_archived_age_seconds Since the last segment was archived, by the database clock '
             '(-1: never).', '# TYPE ctl_l2_archived_age_seconds gauge']
     out += ['ctl_l2_archived_age_seconds{host_id="%s"} %d'
-            % (r['host_id'], int(r['archived_age']) if r['archived_age'] is not None else -1) for r in rows]
+            % (r['host_id'], int(r['archived_age']) if r['archived_age'] is not None else -1) for r in seen]
     out += ['# HELP ctl_l2_archive_failed_total archive_command failures since the statistics reset.',
             '# TYPE ctl_l2_archive_failed_total counter']
-    out += ['ctl_l2_archive_failed_total{host_id="%s"} %d' % (r['host_id'], r['failed_count']) for r in rows]
+    out += ['ctl_l2_archive_failed_total{host_id="%s"} %d' % (r['host_id'], r['failed_count']) for r in seen]
     return out
 
 

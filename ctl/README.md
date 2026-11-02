@@ -904,6 +904,22 @@ ctlplane drill ...`; the file goes when `ctl-secrets` next restarts or stops.
     - **Expire and db-1's backup weren't serialized**: expire waits outside its
       hours and while a backup is in progress (`l2.may_expire`).
 
+76. **Codex re-review of 75**:
+    - **Expire still raced a backup**: ctl-1 now asks db-1 for its backup
+      lock first (`L2.Hold`: internal, host-scoped, never requested by an
+      operator) and runs expire only while the hold it was granted has more
+      than 5 minutes plus a margin left (db-1's reported end, less 60 s of
+      clock skew), with a 5-minute timeout. A refused hold (a backup has the
+      lock) is asked for again after 10 minutes.
+    - **A small backlog that never drained was invisible**: db-1 reports the
+      archive queue itself (`.ready` files, `pg_ls_archive_statusdir`: count
+      and the oldest one's age, migration 0019). `L2WalArchiveLag` is the
+      oldest pending segment over 5 minutes; the count (5+ for 5 minutes) is a
+      sev3 pressure signal; the subtraction from `last_archived_wal` is gone.
+    - **A db host that never reported had no series**: every active db host
+      gets `ctl_l2_archiver_report_timestamp_seconds`, 0 until it reports, so
+      `L2ArchiverSilent` fires for it.
+
 ## Tests
 
 `tests/test_agent_api.py` runs the real `hostagent` Agent and Poller against

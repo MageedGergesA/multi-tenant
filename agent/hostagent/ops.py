@@ -146,6 +146,8 @@ PARAMS = {
     'RestoreCopy.Expire': obj({'environment_id': UUID}),
     'Host.Drain': obj({'evacuate': {'type': 'boolean'}}),
     'Host.RotateTrust': obj({'trust_document': TRUST_DOCUMENT}),
+    # ctl-1's L2 worker, before pgBackRest expire (DOC-05 §3.1): db-1 holds its backup lock this long.
+    'L2.Hold': obj({'seconds': {'type': 'integer', 'minimum': 60, 'maximum': 3600}}),
     'Agent.Query': obj({'op_id': {'anyOf': [UUID, {'type': 'null'}]}}),
 }
 
@@ -193,6 +195,7 @@ CATALOG = {
     'Tenant.MeterSeats': OpSpec(('app.meter',), states=LIVE, exclusive=False, mutating=False),
     'RestoreCopy.Expire': OpSpec(('app.expire', 'db.expire'), states=None),
     'Host.Drain': OpSpec(('any.drain',), host_scoped=True),
+    'L2.Hold': OpSpec(('db.l2_hold',), host_scoped=True, exclusive=False, mutating=False),
     'Host.RotateTrust': OpSpec(('any.rotate_trust',), host_scoped=True),
     'Agent.Query': OpSpec(('any.query',), exclusive=False, mutating=False),
 }
@@ -207,6 +210,7 @@ STEP_TIMEOUTS = {
     'app.update_modules': 3600,
     **dict.fromkeys(('app.backup', 'app.restore_copy', 'app.export'), 7200),
     'app.health': 180,
+    'db.l2_hold': 30,
 }
 DEFAULT_STEP_TIMEOUT = 600
 

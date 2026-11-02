@@ -79,6 +79,32 @@
       ansible.builtin.command: runuser -u postgres -- pgbackrest --stanza={{ pgbackrest_stanza }} check
       changed_when: false
 
+    - name: The backup lock's directory (postgres only)
+      ansible.builtin.file:
+        path: "{{ pgbackrest_lock | dirname }}"
+        state: directory
+        owner: postgres
+        group: postgres
+        mode: "0700"
+
+    # Hosts configured by the first version of this role had a timer per type (Codex: they would
+    # keep firing alongside the new one, two fulls on a Sunday, and expire shortens the history).
+    - name: The previous per-type timers are gone
+      ansible.builtin.systemd_service:
+        name: "pgbackrest-{{ item }}.timer"
+        state: stopped
+        enabled: false
+      loop: [full, diff]
+      failed_when: false
+      changed_when: false
+
+    - name: Their unit files too
+      ansible.builtin.file:
+        path: "/etc/systemd/system/{{ item }}"
+        state: absent
+      loop: [pgbackrest-full.timer, pgbackrest-diff.timer, pgbackrest@.service]
+      register: pgbackrest_legacy
+
     - name: The backup scheduler (chooses full or differential)
       ansible.builtin.copy:
         src: pgbackrest-scheduled
@@ -114,6 +140,6 @@
         name: "pgbackrest-{{ item }}.timer"
         enabled: true
         # Units too: a changed stanza changes their command, not the timers (Codex P3).
-        daemon_reload: "{{ pgbackrest_timers is changed or pgbackrest_units is changed }}"
+        daemon_reload: "{{ pgbackrest_timers is changed or pgbackrest_units is changed or pgbackrest_legacy is changed }}"
         state: started
       loop: [backup, check]
