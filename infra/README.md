@@ -11,7 +11,7 @@ server: applying needs the owner's priced approval and `HCLOUD_TOKEN`.
 | `ansible/ctl.yml` | roles `base` (packages, SSH keys-only, nftables), `wireguard` (wg0 10.8.0.1/24, the host makes its own key, peers from `wireguard_peers`), `postgresql` (Ubuntu's PostgreSQL 16, loopback, SCRAM, `ctl_owner` + database `ctl`), `monitoring` (Ubuntu's Prometheus 2.45 and Alertmanager 0.26 on loopback, Alertmanager clustering off; ctl's rules from `ctl/monitoring/rules`, each `promtool`-checked; every alert to ctl's webhook as an incident; the webhook token made on the host, only its SHA-256 in `ctl.toml`; an always-firing `Watchdog` to `monitoring_deadman_url`), `ctl` (user, sops, the host's age key, the package in `/opt/ctl/venv`, `/etc/ctl/ctl.toml`, the units from `ctl/deploy/`, secrets, the owner's password, migrations, serve) |
 | `tofu/hosts.tf` | db-1 (fixed private IP 10.0.0.3; WireGuard and ICMP from outside), the app hosts (`app_hosts`; HTTP/HTTPS from anywhere), each with a delete-protected Hetzner Volume for the tenants' filestore (DOC-05 §6.2), attached unformatted-mount (the app play mounts it) |
 | `ansible/db.yml` | db-1: `base` (its PostgreSQL port admitted only from the app hosts' range, `base_private_allow`), `wireguard` (client of ctl-1: `endpoint`, `keepalive`), `db_host` (PostgreSQL 16 on loopback and the private IP, TLS with a key and certificate made on the host, `pg_hba` = postgres peer, the agent's `include_dir`, reject), `agent` |
-| `ansible/roles/pgbackrest` | L2 (DOC-05 §2, §3.1): Ubuntu's pgBackRest 2.50 to bucket B (S3 path-style, `aes-256-cbc` repository cipher, zstd, two full cycles). On db-1 (`mode: db`, in `db.yml`): WAL archiving (`archive_timeout` 60 s), the stanza, full Sunday 01:00 UTC and differential the other days, `check` every 2 minutes (a WAL switch, so an idle cluster still archives), with a key that can't delete and `expire-auto=n`; its config root:postgres 0640. On ctl-1 (`mode: ctl`, in `ctl.yml` when `ctl_l2_bucket` is set): config without secrets, for ctl's `l2` worker, which runs `info`, `repo-ls` and a daily `expire` with the delete key and cipher pass from SOPS (`l2_repo.json`, `l2_cipher_pass`) |
+| `ansible/roles/pgbackrest` | L2 (DOC-05 §2, §3.1): Ubuntu's pgBackRest 2.50 to bucket B (S3 path-style, `aes-256-cbc` repository cipher, zstd, two full cycles). On db-1 (`mode: db`, in `db.yml`): WAL archiving (`archive_timeout` 60 s), the stanza, one daily backup at 01:00 UTC whose type `pgbackrest-scheduled` chooses (full on Sunday or when the cluster's newest full is 6.5 days old, else differential; retried on failure), `check` every 2 minutes (a WAL switch, so an idle cluster still archives), with a key that can't delete and `expire-auto=n`; its config root:postgres 0640. On ctl-1 (`mode: ctl`, in `ctl.yml` when `ctl_l2_bucket` is set): config without secrets, for ctl's `l2` worker, which runs `info`, `repo-ls` and a daily `expire` with the delete key and cipher pass from SOPS (`l2_repo.json`, `l2_cipher_pass`) |
 | `ansible/app.yml` | an app host: `base` (80/443 open, `base_public_tcp_ports`; forwarding for Docker's bridges, `base_forward_docker`; the tenants' egress tables loaded with it), `wireguard`, `app` (the filestore Volume mounted at `/srv/tenants`, nodev/nosuid/noexec, never formatted: anything but ext4 stops the play; Ubuntu's `docker.io` with userns-remap, `dockremap` 100000:65536, published ports on 127.0.0.1, no inter-container traffic, live-restore, no-new-privileges, after the filestore and nftables (Wants, so a firewall restart doesn't restart Docker and every tenant); Traefik v3.7.14 by digest on the host network outside the remap, capabilities only `NET_BIND_SERVICE`, read-only, routers from `/etc/traefik/dynamic`, ACME HTTP-01; db-1's certificate as the tenants' libpq root), `agent` (role app: executor as root, `[app]` from `agent_app_*`) |
 | `ansible/roles/agent` | the host agent from `agent/` (reproducible bundle, `agent/requirements.lock`): `agent-exec` (as postgres on db-1, root on an app host; its socket 0660 in the `agent-exec` group it shares with agentd) and `agentd` (user `agent`, sandboxed, `ConditionPathExists` its key), configs in `/etc/agent`, state in `/var/lib/agent` (0700); enrollment with a one-time token, removed after |
 | `test/run.sh` | the playbook against a throwaway Ubuntu 24.04 container with systemd |
@@ -125,12 +125,15 @@ loopback port (Docker Desktop's bridge isn't routable from the host), and
   TLS, port 5432 closed to a private address outside the app range; a second
   run changes nothing;
 - L2: db-1 archives (`archive_mode` on, 60 s), its pgBackRest config
-  root:postgres 0640, the three timers enabled; a full backup through its unit;
+  root:postgres 0640, both timers enabled; the backup unit chooses a full (none
+  yet);
   a row written after it; the check unit; bucket B holds only ciphertext; the
   latest backup restored from bucket B into an empty directory with WAL
   replayed and started as a second cluster: the row is there, recovery done;
   ctl-1's `l2` worker reads the full and the newest WAL time and has run
-  expire; Prometheus has the L2 rules;
+  expire; db-1 reports its WAL archiver with its polls (no backlog, an archived
+  segment); Prometheus has the L2 rules; `test/test_pgbackrest_scheduled.py`
+  checks the backup type choice (after a missed Sunday: full);
 - app-1 (a third container, privileged for Docker inside): a device without
   ext4 stops the play; then configured and enrolled: nftables, Docker,
   Traefik, agent-exec and agentd active, Docker remapped (root dir
@@ -248,6 +251,17 @@ unit never sees its device: the Volume's mount runs only on a real host
     - **A restored cluster takes connections before recovery ends** (hot
       standby): the drill waits for `pg_is_in_recovery()` to turn false before
       it reads, or it can read before the WAL with the probe row is replayed.
+17. Codex review of the L2 round:
+    - **ctl-1's expire could drop a backup db-1 was finishing**: pgBackRest's
+      locks are per host. Expire runs only in `ctl_l2_expire_hours` (10-22 UTC,
+      away from the 01:00 backup) and never while a backup directory not yet in
+      backup.info was written to in the last 12 h. Left: a backup started by
+      hand inside those hours and finishing within expire's few seconds.
+    - **Two persistent timers (full, diff) could both fire after downtime** and
+      the loser had no retry: one daily timer, its type chosen at run time,
+      retried after 30 minutes.
+    - **A changed unit didn't reload systemd** (only a changed timer did).
+    - WAL lag and backups from before a stanza-upgrade: ctl (README 75).
 
 ## Not built
 

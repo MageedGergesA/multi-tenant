@@ -164,6 +164,7 @@ ctl:
     ctl_trust: {release_public_key: "$RELEASE"}
     ctl_regions: [{code: test, backup_recipient: "$RECOVERY", backup_bucket: "$BUCKET"}]
     ctl_l2_bucket: $L2_BUCKET
+    ctl_l2_expire_hours: [0, 24]          # any time here; production keeps away from 01:00 UTC
     pgbackrest_s3_endpoint: $S3_IP
     pgbackrest_s3_port: 4566
     pgbackrest_s3_region: us-east-1
@@ -334,11 +335,13 @@ check "db-1 archives WAL (archive_mode on, timeout 60 s)" \
     test "$(in_db runuser -u postgres -- psql -tAc "SELECT current_setting('archive_mode') || ' ' || current_setting('archive_timeout')")" = "on 1min"
 check "pgBackRest's config on db-1: root:postgres 0640 (its key and the cipher pass)" \
     test "$(in_db stat -c '%U:%G %a' /etc/pgbackrest/pgbackrest.conf)" = "root:postgres 640"
-for t in full diff check; do check "timer pgbackrest-$t enabled" in_db systemctl is-enabled -q "pgbackrest-$t.timer"; done
-if in_db systemctl start pgbackrest@full.service; then ok "a full backup through its unit"; else bad "a full backup through its unit"; in_db journalctl --no-pager -u pgbackrest@full | tail -20; fi
+for t in backup check; do check "timer pgbackrest-$t enabled" in_db systemctl is-enabled -q "pgbackrest-$t.timer"; done
+# The daily unit chooses its type: no full of this cluster yet, so a full.
+if in_db systemctl start pgbackrest-backup.service; then ok "the backup unit ran"; else bad "the backup unit ran"; in_db journalctl --no-pager -u pgbackrest-backup | tail -20; fi
+check "and chose a full (none yet)" sh -c "docker exec $DB journalctl --no-pager -u pgbackrest-backup | grep -q 'pgbackrest-scheduled: full backup'"
 # A row written after the backup: only WAL replay brings it back.
 in_db runuser -u postgres -- psql -q -c "CREATE TABLE l2_probe AS SELECT 'after-the-backup'::text AS v"
-check "the check unit (WAL switch, archive verified)" in_db systemctl start pgbackrest@check.service
+check "the check unit (WAL switch, archive verified)" in_db systemctl start pgbackrest-check.service
 # DOC-05's L2 drill in small: restore the latest full from bucket B into an empty directory, replay
 # the WAL archive to its end, start a second cluster on it and read the row.
 { in_db runuser -u postgres -- sh -c 'rm -rf /var/tmp/l2r && pgbackrest --stanza=main --pg1-path=/var/tmp/l2r restore' \
@@ -373,6 +376,16 @@ until [ "$(l2_metric ctl_l2_full_last_timestamp_seconds)" -gt 0 ] 2>/dev/null ||
 check "ctl-1's l2 worker reads the full backup from bucket B" test "$(l2_metric ctl_l2_full_last_timestamp_seconds)" -gt 0
 check "and the newest WAL segment's time" test "$(l2_metric ctl_l2_wal_last_timestamp_seconds)" -gt 0
 check "and has run expire with its own key" test "$(l2_metric ctl_l2_expire_last_timestamp_seconds)" -gt 0
+archiver_metric() {  # name -> its value for db-1 on ctl-1's /metrics ("none": absent)
+    in_host python3 -c "import sys, urllib.request
+prefix = '%s{host_id=\"%s\"} ' % (sys.argv[1], sys.argv[2])
+lines = urllib.request.urlopen('http://127.0.0.1:9464/metrics').read().decode().splitlines()
+print(next((l[len(prefix):] for l in lines if l.startswith(prefix)), 'none'))" "$1" "$DB_HOST_ID"
+}
+deadline=$((SECONDS + 90))
+until [ "$(archiver_metric ctl_l2_archive_backlog_segments)" = "0" ] || [ $SECONDS -gt $deadline ]; do sleep 3; done
+check "db-1 reports its WAL archiver with its polls: no backlog" test "$(archiver_metric ctl_l2_archive_backlog_segments)" = "0"
+check "and a segment archived (age known)" test "$(archiver_metric ctl_l2_archived_age_seconds)" -ge 0
 check "Prometheus on ctl-1 has the L2 rules" sh -c "docker exec $NAME python3 -c \"import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:9090/api/v1/rules').read().decode())\" | grep -q L2WalArchiveLag"
 if dbplay 3; then ok "db-1 run again"; else bad "db-1 run again failed"; tail -30 "$WORK/db3.log"; fi
 check "the second db-1 run changed nothing" grep -qE 'db-1 +: ok=[0-9]+ +changed=0 +unreachable=0 +failed=0' "$WORK/db3.log"

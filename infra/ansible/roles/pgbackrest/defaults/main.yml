@@ -19,8 +19,10 @@ pgbackrest_s3_port: 443
 pgbackrest_s3_verify_tls: true          # false only against a test stand-in
 pgbackrest_pg_version: 16
 pgbackrest_process_max: 2
-# Weekly full Sunday 01:00 UTC, differential the other days (DOC-05 §2); `check` every 2 minutes
-# switches WAL and verifies archiving, so an idle cluster still stores a segment within 5 minutes.
-pgbackrest_full_on: "Sun *-*-* 01:00:00 UTC"
-pgbackrest_diff_on: "Mon..Sat *-*-* 01:00:00 UTC"
+# One backup a day at 01:00 UTC (DOC-05 §2): full on the full day (0 Monday .. 6 Sunday) or when the
+# cluster's newest full is 6.5 days old, differential otherwise; a failure is retried. `check`
+# every 2 minutes switches WAL and verifies archiving, so an idle cluster still archives.
+pgbackrest_backup_on: "*-*-* 01:00:00 UTC"
+pgbackrest_full_day: 6
+pgbackrest_retry_after: 30min
 pgbackrest_check_on: "*:0/2"

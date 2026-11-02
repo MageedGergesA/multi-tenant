@@ -7,6 +7,7 @@ the SCRAM verifier, validated by verbs.py and passed as a literal.
 `pg_hba.conf` ends with `include_dir` (PostgreSQL 16+) pointing at `hba_dir`,
 followed by a final reject; one file per tenant lives there.
 """
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -122,6 +123,19 @@ class PgBackend:
                                 "GROUP BY datname").fetchall()
             max_conn = int(conn.execute('SHOW max_connections').fetchone()[0])
         return {'max_connections': max_conn, 'per_db': dict(rows)}
+
+    def pg_archiver(self):
+        """WAL archiving as PostgreSQL sees it (pg_stat_archiver), for ctl-1's L2 lag alert: the
+        segment being written and the last one archived (DOC-05 §8). Times are the server's."""
+        with self._conn() as conn:
+            r = conn.execute("SELECT pg_walfile_name(pg_current_wal_lsn()), last_archived_wal, "
+                             "EXTRACT(EPOCH FROM last_archived_time)::float8, failed_count, "
+                             "EXTRACT(EPOCH FROM last_failed_time)::float8, EXTRACT(EPOCH FROM now())::float8 "
+                             "FROM pg_stat_archiver").fetchone()
+        last = r[1] if r[1] and re.match(r'^[0-9A-F]{24}', r[1]) else None
+        # A `.backup` or `.partial` file names its segment first; a `.history` file names none.
+        return {'current_wal': r[0], 'last_archived_wal': last[:24] if last else None, 'last_archived_at': r[2],
+                'failed_count': int(r[3]), 'last_failed_at': r[4], 'at': r[5]}
 
     def pg_inspect(self, sid):
         db, role = naming.db_name(sid), naming.db_role(sid)

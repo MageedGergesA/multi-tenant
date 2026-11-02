@@ -66,6 +66,7 @@ backup_bucket = "{{ region.backup_bucket }}"
 stanza = "{{ ctl_l2_stanza }}"
 key_file = "/run/ctl/l2_repo.json"
 cipher_pass_file = "/run/ctl/l2_cipher_pass"
+expire_hours = {{ ctl_l2_expire_hours | to_json }}
 {% endif %}
 
 [policy]

@@ -3,39 +3,25 @@ rule_files:
   - l2.yml
 evaluation_interval: 1m
 tests:
-  # WAL stored at t=0, the repository read every minute (checked = now): quiet at 5 min, firing after.
+  # WAL stored at t=0, the repository read every minute: quiet at 15 min, firing after.
   - interval: 1m
     input_series:
       - series: 'ctl_l2_wal_last_timestamp_seconds{stanza="main"}'
-        values: '0+0x20'
+        values: '0+0x30'
       - series: 'ctl_l2_checked_timestamp_seconds{stanza="main"}'
-        values: '0+60x20'
+        values: '0+60x30'
     alert_rule_test:
-      - eval_time: 5m
-        alertname: L2WalArchiveLag
+      - eval_time: 15m
+        alertname: L2WalUploadStale
         exp_alerts: []
-      - eval_time: 6m
-        alertname: L2WalArchiveLag
+      - eval_time: 16m
+        alertname: L2WalUploadStale
         exp_alerts:
           - exp_labels: {severity: sev2, runbook: RB-08, stanza: main}
             exp_annotations:
-              summary: "WAL archive lag over 5 minutes (stanza main)"
-              description: "The newest WAL segment in bucket B was stored 6m 0s ago: db-1's archive-push or its check timer is failing; the cluster-loss RPO grows with it."
-      - eval_time: 6m
-        alertname: L2Unread
-        exp_alerts: []
-  # A segment stored every 2 minutes keeps it quiet.
-  - interval: 1m
-    input_series:
-      - series: 'ctl_l2_wal_last_timestamp_seconds{stanza="main"}'
-        values: '0 0 120 120 240 240 360 360 480 480 600 600 720 720'
-      - series: 'ctl_l2_checked_timestamp_seconds{stanza="main"}'
-        values: '0+60x13'
-    alert_rule_test:
-      - eval_time: 13m
-        alertname: L2WalArchiveLag
-        exp_alerts: []
-  # ctl-1 stopped reading at t=0: L2Unread after 15 min, and the lag alert defers to it (blind, not lagging).
+              summary: "No WAL stored in bucket B for 15 minutes (stanza main)"
+              description: "The newest WAL segment in bucket B was stored 16m 0s ago: db-1's archive-push or its check timer is failing."
+  # ctl-1 stopped reading at t=0: L2Unread after 15 min, and the upload alert defers to it (blind, not stale).
   - interval: 1m
     input_series:
       - series: 'ctl_l2_wal_last_timestamp_seconds{stanza="main"}'
@@ -51,8 +37,81 @@ tests:
               summary: "ctl-1 can't read the L2 repository (stanza main)"
               description: "The last successful read of bucket B was 16m 0s ago: the other L2 alerts are blind until it works (ctl's l2 worker logs say why)."
       - eval_time: 16m
+        alertname: L2WalUploadStale
+        exp_alerts: []
+  # Stuck: one finished segment waiting, nothing archived for 6 minutes.
+  - interval: 1m
+    input_series:
+      - series: 'ctl_l2_archive_backlog_segments{host_id="h1"}'
+        values: '1+0x10'
+      - series: 'ctl_l2_archived_age_seconds{host_id="h1"}'
+        values: '0+60x10'
+    alert_rule_test:
+      - eval_time: 5m
         alertname: L2WalArchiveLag
         exp_alerts: []
+      - eval_time: 6m
+        alertname: L2WalArchiveLag
+        exp_alerts:
+          - exp_labels: {severity: sev2, runbook: RB-08, host_id: h1}
+            exp_annotations:
+              summary: "WAL archiving stuck on db-1 (h1)"
+              description: "Finished WAL segments are waiting and none was archived for 6m 0s: archive-push is failing (pg_stat_archiver). The cluster-loss RPO grows with it."
+  # Codex's case: old segments archived every minute (archived age stays small) while the
+  # backlog never drains: the backlog alert fires after 5 minutes, the stuck one doesn't.
+  - interval: 1m
+    input_series:
+      - series: 'ctl_l2_archive_backlog_segments{host_id="h1"}'
+        values: '40+0x15'
+      - series: 'ctl_l2_archived_age_seconds{host_id="h1"}'
+        values: '30+0x15'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: L2WalArchiveBacklog
+        exp_alerts: []
+      - eval_time: 6m
+        alertname: L2WalArchiveBacklog
+        exp_alerts:
+          - exp_labels: {severity: sev2, runbook: RB-08, host_id: h1}
+            exp_annotations:
+              summary: "WAL archive behind on db-1 (h1)"
+              description: "40 finished WAL segments not archived for 5 minutes: archiving is slower than the writes, and the archive is that far behind the database."
+      - eval_time: 6m
+        alertname: L2WalArchiveLag
+        exp_alerts: []
+  # A burst that drains within minutes stays quiet.
+  - interval: 1m
+    input_series:
+      - series: 'ctl_l2_archive_backlog_segments{host_id="h1"}'
+        values: '0 12 8 3 0 0 0 0 0 0'
+      - series: 'ctl_l2_archived_age_seconds{host_id="h1"}'
+        values: '20+0x9'
+    alert_rule_test:
+      - eval_time: 9m
+        alertname: L2WalArchiveBacklog
+        exp_alerts: []
+  # Never archived, and db-1 silent for over 10 minutes.
+  - interval: 1m
+    input_series:
+      - series: 'ctl_l2_archive_backlog_segments{host_id="h1"}'
+        values: '-1+0x15'
+      - series: 'ctl_l2_archiver_report_timestamp_seconds{host_id="h1"}'
+        values: '0+0x15'
+    alert_rule_test:
+      - eval_time: 11m
+        alertname: L2WalNeverArchived
+        exp_alerts:
+          - exp_labels: {severity: sev2, runbook: RB-08, host_id: h1}
+            exp_annotations:
+              summary: "db-1 has never archived a WAL segment (h1)"
+              description: "pg_stat_archiver shows no archived segment: archive_mode or archive_command isn't working."
+      - eval_time: 11m
+        alertname: L2ArchiverSilent
+        exp_alerts:
+          - exp_labels: {severity: sev2, runbook: RB-08, host_id: h1}
+            exp_annotations:
+              summary: "db-1 stopped reporting its WAL archiver (h1)"
+              description: "No archiver report with db-1's polls for 11m 0s: the archive lag alerts are blind (agentd down, or its query failing)."
   # Full at t=0, differentials daily: the full alert after 8 days, the backup alert never.
   - interval: 1h
     input_series:

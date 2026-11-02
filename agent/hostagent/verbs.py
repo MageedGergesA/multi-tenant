@@ -251,6 +251,7 @@ DB = {
     'pg.hba_add': pg_hba_add, 'pg.hba_remove': sid_only, 'pg.reload': no_args,
     'pg.rotate_password': pg_create_role, 'pg.terminate_sessions': sid_only,
     'pg.drop_db': sid_only, 'pg.drop_role': sid_only, 'pg.connection_stats': no_args, 'pg.inspect': sid_only,
+    'pg.archiver': no_args,
 }
 BY_ROLE = {'app': APP, 'db': DB, 'mail': {}}
 

@@ -104,6 +104,39 @@ def l2_metrics(c, now, stanzas=()) -> list[str]:
     return out
 
 
+def wal_segments(name: str) -> int:
+    """A WAL file name's segment number (16 MB segments: 256 per log file), timeline aside."""
+    return int(name[8:16], 16) * 256 + int(name[16:24], 16)
+
+
+def archiver_metrics(c, now) -> list[str]:
+    """From db-1's pg_stat_archiver, reported with each poll: the backlog is the segments
+    finished but not archived (the one being written isn't due yet); -1 if none was ever
+    archived. The ages are relative to the database's own clock at the report, so skew
+    between the hosts doesn't move them."""
+    rows = c.execute("SELECT host_id, EXTRACT(EPOCH FROM reported_at) AS reported, current_wal, last_archived_wal, "
+                     "EXTRACT(EPOCH FROM db_at - last_archived_at) AS archived_age, failed_count, "
+                     "EXTRACT(EPOCH FROM db_at - last_failed_at) AS failed_age "
+                     "FROM db_archiver WHERE reported_at <= %s ORDER BY host_id", (now,)).fetchall()
+    out = ['# HELP ctl_l2_archiver_report_timestamp_seconds When db-1 last reported its WAL archiver (ctl-1 clock).',
+           '# TYPE ctl_l2_archiver_report_timestamp_seconds gauge']
+    out += ['ctl_l2_archiver_report_timestamp_seconds{host_id="%s"} %d' % (r['host_id'], int(r['reported']))
+            for r in rows]
+    out += ['# HELP ctl_l2_archive_backlog_segments WAL segments finished but not archived (-1: none ever archived).',
+            '# TYPE ctl_l2_archive_backlog_segments gauge']
+    out += ['ctl_l2_archive_backlog_segments{host_id="%s"} %d'
+            % (r['host_id'], max(0, wal_segments(r['current_wal']) - wal_segments(r['last_archived_wal']) - 1)
+               if r['last_archived_wal'] else -1) for r in rows]
+    out += ['# HELP ctl_l2_archived_age_seconds Since the last segment was archived, by the database clock '
+            '(-1: never).', '# TYPE ctl_l2_archived_age_seconds gauge']
+    out += ['ctl_l2_archived_age_seconds{host_id="%s"} %d'
+            % (r['host_id'], int(r['archived_age']) if r['archived_age'] is not None else -1) for r in rows]
+    out += ['# HELP ctl_l2_archive_failed_total archive_command failures since the statistics reset.',
+            '# TYPE ctl_l2_archive_failed_total counter']
+    out += ['ctl_l2_archive_failed_total{host_id="%s"} %d' % (r['host_id'], r['failed_count']) for r in rows]
+    return out
+
+
 def metrics(c, now=None, l2_stanzas=()) -> str:
     """`now`: the store's clock (bounds the dump, anchor and drill times read)."""
     now = _ts(time.time() if now is None else now)
@@ -139,6 +172,7 @@ def metrics(c, now=None, l2_stanzas=()) -> str:
             'first dump; 0: no dump yet).', '# TYPE ctl_controlplane_drill_last_pass_timestamp_seconds gauge',
             'ctl_controlplane_drill_last_pass_timestamp_seconds %d' % int(last['drill'])]
     out += l2_metrics(c, now, l2_stanzas)
+    out += archiver_metrics(c, now)
     return '\n'.join(out) + '\n'
 
 

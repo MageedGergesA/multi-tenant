@@ -263,3 +263,25 @@ def test_operator_request_runs_on_the_agent(w, app):
     assert op['state'] == 'DISPATCHED'
     assert app.run() == 1
     assert api.get('/v1/operations/%s' % op['id'], who='auditor').json()['state'] == 'COMPLETED'
+
+
+def test_db_1_reports_its_wal_archiver_with_a_poll(w, pki, api):
+    """DOC-05 §8: the archive lag, from pg_stat_archiver, rides on db-1's polls."""
+    report = {'current_wal': '00000001000000020000003C', 'last_archived_wal': '00000001000000020000003B',
+              'last_archived_at': 1793190000.5, 'failed_count': 2, 'last_failed_at': None, 'at': 1793190030.0}
+    assert post(api, '/v1/agents/%s/poll' % DB_HOST, {'wait': 0, 'capacity': 1, 'archiver': report}, pki, 'db')[0] == 204
+    [row] = w.sql('SELECT * FROM db_archiver')
+    assert (str(row['host_id']), row['current_wal'], row['failed_count']) == (DB_HOST, report['current_wal'], 2)
+    # Malformed: refused before anything is stored.
+    bad = dict(report, current_wal='../../etc')
+    assert post(api, '/v1/agents/%s/poll' % DB_HOST, {'wait': 0, 'capacity': 1, 'archiver': bad}, pki, 'db')[0] == 422
+    extra = dict(report, note='x')
+    assert post(api, '/v1/agents/%s/poll' % DB_HOST, {'wait': 0, 'capacity': 1, 'archiver': extra}, pki, 'db')[0] == 422
+
+
+def test_an_app_hosts_archiver_report_is_ignored(w, pki, api):
+    report = {'current_wal': '00000001000000020000003C', 'last_archived_wal': None, 'last_archived_at': None,
+              'failed_count': 0, 'last_failed_at': None, 'at': 1793190030.0}
+    assert post(api, '/v1/agents/%s/poll' % APP_HOST, {'wait': 0, 'capacity': 1, 'archiver': report}, pki, 'app')[0] \
+        == 204
+    assert w.sql('SELECT * FROM db_archiver') == []

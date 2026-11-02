@@ -1,6 +1,6 @@
 """The agent-facing API on ctl-1 (README gap 28 in the agent):
 
-    POST /v1/agents/<host_id>/poll       {"wait": s, "capacity": n}
+    POST /v1/agents/<host_id>/poll       {"wait": s, "capacity": n[, "archiver": {...}]}
          -> 200 {"envelopes": [...]} | 204
     POST /v1/agents/<host_id>/responses  {"responses": [...]}
          -> 200 {"outcomes": [...]}
@@ -19,9 +19,25 @@ from pydantic import BaseModel, Field
 from .store import Store
 
 
+WAL = r'^[0-9A-F]{24}$'
+EPOCH = dict(ge=0, le=2 ** 33)
+
+
+class Archiver(BaseModel):
+    """A db host's pg_stat_archiver with each poll (DOC-05 §8: WAL archive lag)."""
+    model_config = {'extra': 'forbid'}
+    current_wal: str = Field(pattern=WAL)
+    last_archived_wal: str | None = Field(default=None, pattern=WAL)
+    last_archived_at: float | None = Field(default=None, **EPOCH)
+    failed_count: int = Field(ge=0, le=2 ** 62)
+    last_failed_at: float | None = Field(default=None, **EPOCH)
+    at: float = Field(**EPOCH)
+
+
 class Poll(BaseModel):
     wait: int = Field(ge=0, le=60)
     capacity: int = Field(ge=1, le=32)
+    archiver: Archiver | None = None
 
 
 class Responses(BaseModel):
@@ -44,6 +60,8 @@ def create_app(store: Store, *, poll_interval: float = 0.5) -> FastAPI:
     @app.post('/v1/agents/{host_id}/poll')
     def poll(host_id: uuid.UUID, body: Poll, request: Request):
         host = authenticate(request, host_id)
+        if body.archiver is not None:
+            store.record_archiver(host, body.archiver.model_dump())
         until = time.monotonic() + body.wait
         while True:
             envelopes = store.claim(host, body.capacity)

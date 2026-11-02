@@ -5,7 +5,7 @@ Description=pgBackRest {{ item.kind }} schedule
 [Timer]
 OnCalendar={{ item.at }}
 Persistent=true
-Unit=pgbackrest@{{ item.kind }}.service
+Unit=pgbackrest-{{ item.kind }}.service
 
 [Install]
 WantedBy=timers.target

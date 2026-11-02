@@ -1,0 +1,20 @@
+# {{ ansible_managed }}: infra/ansible role pgbackrest. One daily backup, its type chosen by
+# pgbackrest-scheduled (full on the full day or when overdue, else differential); retried.
+[Unit]
+Description=pgBackRest backup ({{ pgbackrest_stanza }})
+After=postgresql@{{ pgbackrest_pg_version }}-main.service
+Requires=postgresql@{{ pgbackrest_pg_version }}-main.service
+StartLimitIntervalSec=12h
+StartLimitBurst=4
+
+[Service]
+Type=oneshot
+User=postgres
+Group=postgres
+ExecStart=/usr/local/sbin/pgbackrest-scheduled --stanza {{ pgbackrest_stanza }} --full-day {{ pgbackrest_full_day }}
+Restart=on-failure
+RestartSec={{ pgbackrest_retry_after }}
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=full

@@ -74,6 +74,21 @@ class Store:
                             (_ts(self.clock()), host_id, list(POLLING_HOST_STATES), cert_sha256)).fetchone()
         return row is not None
 
+    def record_archiver(self, host_id, a: dict):
+        """db-1's WAL archiver, from its poll (agent_api). Only a db host's is kept."""
+        at = lambda v: datetime.fromtimestamp(v, timezone.utc) if v is not None else None  # noqa: E731
+        with self.connect() as c:
+            c.execute("INSERT INTO db_archiver (host_id, reported_at, db_at, current_wal, last_archived_wal, "
+                      "last_archived_at, failed_count, last_failed_at) "
+                      "SELECT id, %s, %s, %s, %s, %s, %s, %s FROM host WHERE id = %s AND role = 'db' "
+                      "ON CONFLICT (host_id) DO UPDATE SET reported_at = EXCLUDED.reported_at, db_at = EXCLUDED.db_at, "
+                      "current_wal = EXCLUDED.current_wal, last_archived_wal = EXCLUDED.last_archived_wal, "
+                      "last_archived_at = EXCLUDED.last_archived_at, failed_count = EXCLUDED.failed_count, "
+                      "last_failed_at = EXCLUDED.last_failed_at",
+                      (_ts(self.clock()), at(a['at']), a['current_wal'], a['last_archived_wal'],
+                       at(a['last_archived_at']), a['failed_count'], at(a['last_failed_at']), host_id))
+            c.commit()
+
     def _agent_key(self, c, host_id) -> VerifyKey | None:
         row = c.execute('SELECT k.public_key FROM host h JOIN signing_key k ON k.id = h.agent_key_id '
                         "WHERE h.id = %s AND k.purpose = 'agent' AND k.retired_at IS NULL", (host_id,)).fetchone()

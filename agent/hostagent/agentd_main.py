@@ -38,7 +38,9 @@ def main():
     stop = threading.Event()
     for sig in (signal.SIGTERM, signal.SIGINT):
         signal.signal(sig, lambda *_: stop.set())
-    Poller(agent, cp, workers=config.workers, wait=config.poll_wait).run_forever(stop)
+    # db-1 reports its WAL archiver with each poll (ctl-1's L2 lag alert, DOC-05 §8).
+    report = (lambda: {'archiver': agent.exec.call('pg.archiver')}) if config.role == 'db' else None
+    Poller(agent, cp, workers=config.workers, wait=config.poll_wait, report=report).run_forever(stop)
 
 
 if __name__ == '__main__':

@@ -889,6 +889,21 @@ ctlplane drill ...`; the file goes when `ctl-secrets` next restarts or stops.
     repository is being read), no full for 8 days, no full or differential
     for 26 hours, repository unread for 15 minutes, expire stale for 3 days.
 
+75. **Codex review of the L2 round** (and infra README 17):
+    - **The WAL "lag" alert measured uploads, not lag**: old segments uploaded
+      late keep the repository's newest object fresh. db-1's agent now sends
+      `pg_stat_archiver` with each poll (`archiver` in the poll body, checked
+      field by field; kept only from a db host, `db_archiver`, migration 0018).
+      `ctl_l2_archive_backlog_segments` counts finished segments not archived,
+      `ctl_l2_archived_age_seconds` is by the database's own clock. Alerts:
+      stuck (a waiting segment, nothing archived for 5 min), behind (5+ waiting
+      for 5 min), never archived, db-1 silent for 10 min; the repository
+      freshness stays as `L2WalUploadStale` (15 min).
+    - **Backups of the previous cluster kept the backup alerts quiet** after a
+      stanza-upgrade: only backups of the current database id count.
+    - **Expire and db-1's backup weren't serialized**: expire waits outside its
+      hours and while a backup is in progress (`l2.may_expire`).
+
 ## Tests
 
 `tests/test_agent_api.py` runs the real `hostagent` Agent and Poller against

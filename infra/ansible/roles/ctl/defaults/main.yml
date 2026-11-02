@@ -18,6 +18,8 @@ ctl_policy: {breakglass_enabled: false, backups_per_host: 2, drills_per_day: 1}
 # delete in bucket B ({key_id, secret}) and the repository's cipher pass.
 ctl_l2_bucket: ""
 ctl_l2_stanza: main
+# UTC hours [from, to) when expire may run: away from db-1's 01:00 backups (ctlplane/l2.py).
+ctl_l2_expire_hours: [10, 22]
 ctl_l2_secret_keys: [l2_repo.json, l2_cipher_pass]
 # Required, no default: ctl_sops_file, ctl_tls_cert_file, ctl_agents_ca_cert_file, ctl_jwks_file,
 # ctl_oidc_issuer, ctl_oidc_audience, ctl_bucket_c, ctl_recovery_recipient.

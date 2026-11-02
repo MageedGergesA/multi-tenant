@@ -232,7 +232,8 @@ class Ctl:
             jobs.append(('l2', L2(self.store, stanza=c.get('l2', 'stanza', 'main'),
                                   pgbackrest=c.get('l2', 'pgbackrest', ['pgbackrest']),
                                   key=c.json_secret('l2', 'key_file'),
-                                  cipher_pass=c.secret('l2', 'cipher_pass_file')).run_once, 120))
+                                  cipher_pass=c.secret('l2', 'cipher_pass_file'),
+                                  expire_hours=tuple(c.get('l2', 'expire_hours', [10, 22]))).run_once, 120))
         return jobs
 
 

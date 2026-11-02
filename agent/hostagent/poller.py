@@ -14,6 +14,7 @@ connection or a restart never loses one; ctl-1 deduplicates on
 (op_id, fencing_token, step, status).
 """
 import json
+import logging
 import ssl
 import threading
 import time
@@ -26,6 +27,8 @@ MAX_BODY = 4 << 20            # largest poll reply accepted
 DELIVER_BATCH = 50
 KEEP_DELIVERED = 24 * 3600    # outbox rows kept after delivery, for redelivery dedup
 
+
+log = logging.getLogger(__name__)
 
 class TransportError(Exception):
     pass
@@ -57,8 +60,8 @@ class ControlPlane:
         except (urllib.error.URLError, OSError) as e:
             raise TransportError(type(e).__name__) from None
 
-    def poll(self, wait: int, capacity: int) -> list[dict]:
-        status, raw = self._post('/poll', {'wait': wait, 'capacity': capacity}, wait + self.timeout)
+    def poll(self, wait: int, capacity: int, report: dict | None = None) -> list[dict]:
+        status, raw = self._post('/poll', {'wait': wait, 'capacity': capacity, **(report or {})}, wait + self.timeout)
         if status == 204:
             return []
         if len(raw) > MAX_BODY:
@@ -78,8 +81,11 @@ class ControlPlane:
 
 class Poller:
     def __init__(self, agent, cp: ControlPlane, *, workers: int = 4, wait: int = 25, max_backoff: float = 60,
-                 sleep=time.sleep):
+                 sleep=time.sleep, report=None):
+        """`report`: a callable whose dict goes with each poll (db-1: its WAL archiver); its
+        failure sends none, never fails the poll."""
         self.agent = agent
+        self.report = report
         self.cp = cp
         self.wait = wait
         self.max_backoff = max_backoff
@@ -126,7 +132,7 @@ class Poller:
         try:
             if not self.deliver():
                 raise TransportError('deliver')
-            envelopes = self.cp.poll(self.wait, capacity)
+            envelopes = self.cp.poll(self.wait, capacity, self._report())
         except TransportError:
             for _ in range(capacity):
                 self.free.release()
@@ -139,6 +145,15 @@ class Poller:
         for _ in range(capacity - len(envelopes)):
             self.free.release()
         return len(envelopes)
+
+    def _report(self) -> dict | None:
+        if self.report is None:
+            return None
+        try:
+            return self.report()
+        except Exception:
+            log.warning('poll report failed; polling without it', exc_info=True)
+            return None
 
     def run_forever(self, stop: threading.Event):
         self.start()

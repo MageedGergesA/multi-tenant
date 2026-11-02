@@ -10,6 +10,7 @@ pgBackRest's environment, never its config file.
 import json
 import logging
 import os
+import re
 import subprocess
 import time
 from datetime import datetime, timezone
@@ -18,6 +19,14 @@ log = logging.getLogger(__name__)
 
 EXPIRE_EVERY = 24 * 3600
 TIMEOUT = 600
+# pgBackRest's locks are local files, so db-1's backup and ctl-1's expire don't exclude each other;
+# an expire that loads backup.info before a backup completes and saves it after would drop that
+# backup and then remove its files as unlisted. Expire runs only in hours away from db-1's
+# schedule (01:00 UTC), and never while a backup directory not yet in backup.info was written to
+# recently (a backup in progress; an older one is abandoned, and expire may remove it).
+EXPIRE_HOURS = (10, 22)
+RUNNING_FOR = 12 * 3600
+LABEL = re.compile(r'^\d{8}-\d{6}F(_\d{8}-\d{6}[DI])?$')
 
 
 class L2Error(Exception):
@@ -34,7 +43,11 @@ def summarize(info: dict, listing: dict | None) -> dict:
     status = info.get('status') or {}
     if status.get('code') != 0:
         raise L2Error('stanza %s: %s' % (info.get('name'), status.get('message')))
-    good = [b for b in info.get('backup') or [] if not b.get('error')]
+    # Only the cluster now in use: after a stanza-upgrade, the previous generation's backups can't
+    # restore it, so they mustn't keep the backup alerts quiet.
+    current = current_db(info)
+    good = [b for b in info.get('backup') or [] if not b.get('error') and current is not None
+            and (b.get('database') or {}).get('id') == current]
     stops = lambda kinds: [b['timestamp']['stop'] for b in good if b['type'] in kinds]  # noqa: E731
     out = {'full_at': max(stops(('full',)), default=None), 'backup_at': max(stops(('full', 'diff')), default=None),
            'wal_at': None, 'wal_segment': None}
@@ -48,15 +61,21 @@ def summarize(info: dict, listing: dict | None) -> dict:
     return out
 
 
+def current_db(info: dict) -> int | None:
+    """The database id of the cluster now in use: the highest (a stanza-upgrade adds one)."""
+    ids = [d['id'] for d in info.get('db') or []] or [a['database']['id'] for a in info.get('archive') or []]
+    return max(ids, default=None)
+
+
 def newest_archive(info: dict) -> dict | None:
-    """The archive of the cluster now in use: the highest database id (a stanza-upgrade adds one)."""
-    archives = info.get('archive') or []
-    return max(archives, key=lambda a: a['database']['id']) if archives else None
+    """The archive of the cluster now in use."""
+    current = current_db(info)
+    return next((a for a in info.get('archive') or [] if a['database']['id'] == current), None)
 
 
 class L2:
     def __init__(self, store, *, stanza='main', pgbackrest=('pgbackrest',), key=None, cipher_pass=None,
-                 expire_every=EXPIRE_EVERY, clock=time.time, run=subprocess.run):
+                 expire_every=EXPIRE_EVERY, expire_hours=EXPIRE_HOURS, clock=time.time, run=subprocess.run):
         """`key`: bucket B's key that can delete ({key_id, secret}); `cipher_pass`: the repository's."""
         self.store = store
         self.env = {'PATH': os.environ.get('PATH', '/usr/bin:/bin')}
@@ -67,6 +86,7 @@ class L2:
         self.stanza = stanza
         self.pgbackrest = list(pgbackrest)
         self.expire_every = expire_every
+        self.expire_hours = expire_hours
         self.clock = clock
         self.run = run
 
@@ -81,19 +101,48 @@ class L2:
             raise L2Error('pgbackrest %s (%d): %s' % (args[-1], done.returncode, done.stderr.strip()[-300:]))
         return done.stdout
 
-    def read(self) -> dict:
+    def _json(self, *args):
         try:
-            [info] = json.loads(self._cmd('--output=json', 'info'))
+            return json.loads(self._cmd(*args))
         except ValueError:
-            raise L2Error('pgbackrest info: not one stanza in JSON') from None
+            raise L2Error('pgbackrest %s: not JSON' % args[-1]) from None
+
+    def _info(self) -> dict:
+        info = self._json('--output=json', 'info')
+        if not isinstance(info, list) or len(info) != 1:
+            raise L2Error('pgbackrest info: not one stanza')
+        return info[0]
+
+    def running_backups(self, info, now) -> list[str]:
+        """Backup directories in the repository that backup.info doesn't list yet and that were
+        written to within RUNNING_FOR: backups in progress (on db-1, beyond ctl-1's locks)."""
+        listed = {b['label'] for b in info.get('backup') or []}
+        found = self._json('repo-ls', '--output=json', 'backup/%s' % self.stanza)
+        out = []
+        for name, entry in sorted(found.items()):
+            if entry.get('type') != 'path' or not LABEL.match(name) or name in listed:
+                continue
+            inside = self._json('repo-ls', '--output=json', 'backup/%s/%s' % (self.stanza, name))
+            newest = max((v.get('time', 0) for v in inside.values() if v.get('type') == 'file'), default=0)
+            if now - newest < RUNNING_FOR:
+                out.append(name)
+        return out
+
+    def may_expire(self, now) -> str | None:
+        """Why expire must wait now, or None."""
+        hour = datetime.fromtimestamp(now, timezone.utc).hour
+        if not self.expire_hours[0] <= hour < self.expire_hours[1]:
+            return 'outside %02d:00-%02d:00 UTC' % self.expire_hours
+        running = self.running_backups(self._info(), now)
+        return 'backup in progress: %s' % ', '.join(running) if running else None
+
+    def read(self) -> dict:
+        info = self._info()
         archive = newest_archive(info)
         listing = None
         if archive and archive.get('max'):
-            path = 'archive/%s/%s/%s' % (self.stanza, archive['id'], archive['max'][:16])
-            try:
-                listing = json.loads(self._cmd('repo-ls', '--output=json', path))
-            except ValueError:
-                raise L2Error('pgbackrest repo-ls: not JSON') from None
+            listing = self._json('repo-ls', '--output=json',
+                                 'archive/%s/%s/%s' % (self.stanza, archive['id'], archive['max'][:16]))
         return summarize(info, listing)
 
     def run_once(self):
@@ -104,8 +153,12 @@ class L2:
         errors, expired = [], None
         if last_expire is None or now - last_expire >= self.expire_every:
             try:
-                self._cmd('expire')
-                expired = now
+                wait = self.may_expire(now)
+                if wait:
+                    log.info('l2: expire waits (%s)', wait)
+                else:
+                    self._cmd('expire')
+                    expired = now
             except L2Error as e:
                 errors.append(str(e))
         try:

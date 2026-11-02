@@ -307,3 +307,20 @@ def test_heartbeats_are_not_a_finished_result(h, pki, ctl):
     stored = h.state.finished_response(env['op_id'], env['fencing_token'], env['step'],
                                        request_sha256(env))
     assert stored['status'] == 'done'
+
+
+def test_db_1s_archiver_rides_on_its_polls(h, pki, ctl):
+    """DOC-05 §8: the report goes with every poll; a failing report never stops polling."""
+    calls = []
+
+    def report():
+        calls.append(1)
+        if len(calls) == 2:
+            raise RuntimeError('database down')
+        return {'archiver': {'current_wal': '00000001000000020000003C'}}
+    p = poller(h, pki, ctl, report=report)
+    p.run_once()
+    p.run_once()
+    drain(p)
+    assert ctl.polls[0]['archiver'] == {'current_wal': '00000001000000020000003C'}
+    assert 'archiver' not in ctl.polls[1] and len(ctl.polls) == 2

@@ -79,13 +79,23 @@
       ansible.builtin.command: runuser -u postgres -- pgbackrest --stanza={{ pgbackrest_stanza }} check
       changed_when: false
 
-    - name: Backup and check unit
+    - name: The backup scheduler (chooses full or differential)
+      ansible.builtin.copy:
+        src: pgbackrest-scheduled
+        dest: /usr/local/sbin/pgbackrest-scheduled
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Backup and check units
       ansible.builtin.template:
-        src: pgbackrest@.service.j2
-        dest: /etc/systemd/system/pgbackrest@.service
+        src: "{{ item }}.service.j2"
+        dest: "/etc/systemd/system/{{ item }}.service"
         owner: root
         group: root
         mode: "0644"
+      loop: [pgbackrest-backup, pgbackrest-check]
+      register: pgbackrest_units
 
     - name: Timers
       ansible.builtin.template:
@@ -95,8 +105,7 @@
         group: root
         mode: "0644"
       loop:
-        - {kind: full, at: "{{ pgbackrest_full_on }}"}
-        - {kind: diff, at: "{{ pgbackrest_diff_on }}"}
+        - {kind: backup, at: "{{ pgbackrest_backup_on }}"}
         - {kind: check, at: "{{ pgbackrest_check_on }}"}
       register: pgbackrest_timers
 
@@ -104,6 +113,7 @@
       ansible.builtin.systemd_service:
         name: "pgbackrest-{{ item }}.timer"
         enabled: true
-        daemon_reload: "{{ pgbackrest_timers is changed }}"
+        # Units too: a changed stanza changes their command, not the timers (Codex P3).
+        daemon_reload: "{{ pgbackrest_timers is changed or pgbackrest_units is changed }}"
         state: started
-      loop: [full, diff, check]
+      loop: [backup, check]
