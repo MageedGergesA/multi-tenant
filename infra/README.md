@@ -286,6 +286,12 @@ unit never sees its device: the Volume's mount runs only on a real host
       while a lease is in force; an unreadable lease counts as in force. The
       harness restarts agent-exec with a lease out and a backup still waits.
     - The lease's timing on ctl-1 and an older agent's poll: ctl (README 77).
+20. Codex review of 19: **the lease could be lost in a crash after it was
+    granted** (the file was synced, its rename wasn't): the directory is
+    synced too, still under the lock, before the grant is answered. The
+    harness's lease checks also failed on their own (`pipefail` took the
+    scheduler's exit 1 for the check's); and ctl-1's holds kept db-1's first
+    backup waiting (ctl README 78).
 
 ## Not built
 

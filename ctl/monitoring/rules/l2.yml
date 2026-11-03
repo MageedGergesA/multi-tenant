@@ -42,6 +42,15 @@ groups:
         annotations:
           summary: "db-1 isn't reporting its WAL archiver ({{ $labels.host_id }})"
           description: "No archiver report with db-1's polls for {{ $value | humanizeDuration }} (or never): the archive lag alerts are blind (agentd down, an old agent, or its query failing)."
+      - alert: L2ArchiveQueueUnreported
+        expr: ctl_l2_archive_queue_reported == 0
+        for: 15m
+        labels:
+          severity: sev3
+          runbook: RB-08
+        annotations:
+          summary: "db-1 reports no WAL archive queue ({{ $labels.host_id }})"
+          description: "db-1's archiver reports come without the queue of waiting segments (an older agent): the archive lag and backlog alerts can't fire. Upgrade its agent."
       # The repository end to end: the newest segment stored in bucket B (db-1's check timer
       # switches WAL every 2 minutes). Late uploads of old segments keep this fresh: the lag
       # alerts above are the ones that see that.

@@ -380,12 +380,19 @@ check "ctl-1's l2 worker reads the full backup from bucket B" test "$(l2_metric 
 check "and the newest WAL segment's time" test "$(l2_metric ctl_l2_wal_last_timestamp_seconds)" -gt 0
 check "and has run expire with its own key, inside a hold db-1's agent granted" test "$(l2_metric ctl_l2_expire_last_timestamp_seconds)" -gt 0
 check "the hold: an L2.Hold operation completed on db-1, held" sh -c "docker exec $NAME runuser -u postgres -- psql -d ctl -tAc \"SELECT o.state || ' ' || (s.observed->>'held') FROM operation o JOIN operation_step s ON s.operation_id = o.id WHERE o.type = 'L2.Hold' ORDER BY o.created_at DESC LIMIT 1\" | grep -qx 'COMPLETED true'"
-# The lease is on db-1's disk: a backup now waits, and still does after agent-exec restarts.
-lease_blocks() { in_db runuser -u postgres -- /usr/local/sbin/pgbackrest-scheduled --stanza main \
-    --lock /var/lib/pgbackrest-lock/backup.lock --lock-wait 1 2>&1 | grep -q 'L2 lease'; }
-check "while ctl-1's lease is in force a backup on db-1 waits" lease_blocks
+# The lease is on db-1's disk: a backup waits, and still does after agent-exec restarts. A fresh
+# hold here (the worker's may have run out by now), as agentd asks for one: through the executor.
+in_db runuser -u agent -- /opt/agent/venv/bin/python -c "from pathlib import Path
+from hostagent.execd import ExecClient
+assert ExecClient(Path('/run/agent-exec/agent-exec.sock'), 'db').call('pg.l2_hold', seconds=600)['held']" \
+    && ok "db-1's executor grants a hold" || bad "db-1's executor grants a hold"
+# It exits 1 when it gives up (pipefail): its message says why.
+lease_blocks() { local out; out="$(in_db runuser -u postgres -- /usr/local/sbin/pgbackrest-scheduled --stanza main \
+    --lock /var/lib/pgbackrest-lock/backup.lock --lock-wait 1 2>&1)" && return 1; grep -q 'L2 lease' <<<"$out"; }
+check "while the lease is in force a backup on db-1 waits" lease_blocks
 in_db systemctl restart agent-exec
 check "and still after agent-exec restarts (Codex: the lease isn't the executor's)" lease_blocks
+in_db rm -f /var/lib/pgbackrest-lock/backup.lock.hold
 archiver_metric() {  # name -> its value for db-1 on ctl-1's /metrics ("none": absent)
     in_host python3 -c "import sys, urllib.request
 prefix = '%s{host_id=\"%s\"} ' % (sys.argv[1], sys.argv[2])
@@ -396,6 +403,7 @@ deadline=$((SECONDS + 90))
 until [ "$(archiver_metric ctl_l2_archiver_report_timestamp_seconds)" -gt 0 ] 2>/dev/null || [ $SECONDS -gt $deadline ]; do sleep 3; done
 check "db-1 reports its WAL archiver with its polls" test "$(archiver_metric ctl_l2_archiver_report_timestamp_seconds)" -gt 0
 check "nothing waiting long (oldest pending segment under 5 minutes)" test "$(archiver_metric ctl_l2_archive_oldest_pending_seconds)" -lt 300
+check "and with the queue (the lag alerts aren't blind)" test "$(archiver_metric ctl_l2_archive_queue_reported)" = 1
 check "and a segment archived (age known)" test "$(archiver_metric ctl_l2_archived_age_seconds)" -ge 0
 check "Prometheus on ctl-1 has the L2 rules" sh -c "docker exec $NAME python3 -c \"import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:9090/api/v1/rules').read().decode())\" | grep -q L2WalArchiveLag"
 if dbplay 3; then ok "db-1 run again"; else bad "db-1 run again failed"; tail -30 "$WORK/db3.log"; fi

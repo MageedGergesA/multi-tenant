@@ -45,6 +45,19 @@ def test_the_lease_outlives_the_executor(tmp_path):
     assert _lease(tmp_path) > time.time() + 110
 
 
+def test_the_rename_is_on_disk_before_the_grant_under_the_lock(tmp_path, monkeypatch):
+    """Codex: fsync of the file alone left the rename itself to a crash. The directory too, while
+    the lock is still held, before the hold is acknowledged."""
+    from hostagent import pg_backend
+    seen = []
+
+    def spy(path):
+        seen.append((path, (tmp_path / 'backup.lock.hold').exists(), _free(tmp_path / 'backup.lock')))
+    monkeypatch.setattr(pg_backend, 'fsync_dir', spy)
+    assert _backend(tmp_path).pg_l2_hold(60)['held']
+    assert seen == [(tmp_path, True, False)]
+
+
 def test_a_running_backup_means_no_hold(tmp_path):
     pg = _backend(tmp_path)
     backup = os.open(tmp_path / 'backup.lock', os.O_RDWR | os.O_CREAT, 0o600)

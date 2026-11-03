@@ -932,6 +932,16 @@ ctlplane drill ...`; the file goes when `ctl-secrets` next restarts or stops.
     - **An agent from before the queue fields was refused at every poll**
       (422, so it never got the hold either): `pending` is optional; without
       it the queue series are absent, not 0 (migration 0020).
+78. **db-1's first backup never ran** (found in the harness): before it,
+    `info` says "no valid backups", so the read after a successful expire
+    failed and the expire wasn't recorded: due again every pass, each asking
+    for a new hold 10 minutes into a 15-minute lease, so backups always found
+    one in force. An expire that ran is recorded even when the read fails, and
+    a new hold is asked for only 10 minutes after the last granted one ends.
+79. **Codex review of 77**: an agent that reports no archive queue left the
+    lag alerts blind with nothing saying so. `ctl_l2_archive_queue_reported`
+    (0: the last report had no queue) and `L2ArchiveQueueUnreported` (sev3,
+    15 min). db-1's lease is on disk before it's granted: infra README 20.
 
 ## Tests
 

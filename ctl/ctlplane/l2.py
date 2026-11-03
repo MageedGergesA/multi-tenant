@@ -155,8 +155,11 @@ class L2:
                 return None, end
         if op is not None and op['state'] in ('DISPATCHED', 'APPLYING', 'RECONCILING'):
             return 'L2 hold pending on db-1', 0
-        if op is not None and now - op['created_at'].timestamp() < HOLD_RETRY:
-            # Refused (a backup holds the lock), failed, or used up: not again at once.
+        # Refused (a backup holds the lock), failed, or used up: not again at once. A granted lease
+        # counts from its end, so backups always get a gap between leases (overlapping ones would
+        # keep them waiting for good while expire can't run or keeps failing).
+        busy = op['params']['seconds'] if op is not None and observed.get('held') else 0
+        if op is not None and now - op['created_at'].timestamp() < busy + HOLD_RETRY:
             return ('backup running on db-1' if op['state'] == 'COMPLETED' and not observed.get('held')
                     else 'L2 hold %s' % op['state'].lower()), 0
         self.store.dispatch('L2.Hold', tenant_id=None, environment_id=None, params={'seconds': HOLD},
@@ -212,9 +215,12 @@ class L2:
         with self.store.connect() as c:
             if seen is None:
                 # What was read before stays (the alerts age from it); only the error is new.
-                c.execute('INSERT INTO l2_status (stanza, checked_at, error) VALUES (%s, %s, %s) '
-                          'ON CONFLICT (stanza) DO UPDATE SET error = EXCLUDED.error',
-                          (self.stanza, _at(0), '; '.join(errors)))
+                # An expire that ran is recorded even so: else it's due again (and holds db-1's backups)
+                # every pass while the read fails, e.g. "no valid backups" before db-1's first one.
+                c.execute('INSERT INTO l2_status (stanza, checked_at, expired_at, error) VALUES (%s, %s, %s, %s) '
+                          'ON CONFLICT (stanza) DO UPDATE SET error = EXCLUDED.error, '
+                          'expired_at = COALESCE(EXCLUDED.expired_at, l2_status.expired_at)',
+                          (self.stanza, _at(0), _at(expired), '; '.join(errors)))
             else:
                 c.execute('INSERT INTO l2_status (stanza, checked_at, full_at, backup_at, wal_at, wal_segment, '
                           'expired_at, error) VALUES (%(s)s, %(now)s, %(full)s, %(backup)s, %(wal)s, %(seg)s, '

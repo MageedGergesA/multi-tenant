@@ -116,6 +116,24 @@ tests:
             exp_annotations:
               summary: "db-1 isn't reporting its WAL archiver (h2)"
               description: "No archiver report with db-1's polls for 13m 0s (or never): the archive lag alerts are blind (agentd down, an old agent, or its query failing)."
+  # Codex: an older agent reports no queue; h1 reports it. Only h1's silence would be seen without this.
+  - interval: 1m
+    input_series:
+      - series: 'ctl_l2_archive_queue_reported{host_id="h1"}'
+        values: '0+0x20'
+      - series: 'ctl_l2_archive_queue_reported{host_id="h2"}'
+        values: '1+0x20'
+    alert_rule_test:
+      - eval_time: 14m
+        alertname: L2ArchiveQueueUnreported
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: L2ArchiveQueueUnreported
+        exp_alerts:
+          - exp_labels: {severity: sev3, runbook: RB-08, host_id: h1}
+            exp_annotations:
+              summary: "db-1 reports no WAL archive queue (h1)"
+              description: "db-1's archiver reports come without the queue of waiting segments (an older agent): the archive lag and backlog alerts can't fire. Upgrade its agent."
   # Full at t=0, differentials daily: the full alert after 8 days, the backup alert never.
   - interval: 1h
     input_series:

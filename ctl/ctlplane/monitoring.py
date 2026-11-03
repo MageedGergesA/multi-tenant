@@ -122,6 +122,11 @@ def archiver_metrics(c, now) -> list[str]:
     out += ['# HELP ctl_l2_archive_pending_segments Finished WAL segments waiting to be archived (.ready files).',
             '# TYPE ctl_l2_archive_pending_segments gauge']
     out += ['ctl_l2_archive_pending_segments{host_id="%s"} %d' % (r['host_id'], r['pending']) for r in queued]
+    # Codex: without this, an agent that reports no queue leaves the lag alerts silently blind.
+    out += ['# HELP ctl_l2_archive_queue_reported Whether db-1\'s last archiver report had the archive '
+            'queue (0: an older agent, no lag data).', '# TYPE ctl_l2_archive_queue_reported gauge']
+    out += ['ctl_l2_archive_queue_reported{host_id="%s"} %d' % (r['host_id'], r['pending'] is not None)
+            for r in seen]
     out += ['# HELP ctl_l2_archive_oldest_pending_seconds Age of the oldest segment waiting to be archived: the '
             'archive lag (0: none waiting).', '# TYPE ctl_l2_archive_oldest_pending_seconds gauge']
     out += ['ctl_l2_archive_oldest_pending_seconds{host_id="%s"} %d' % (r['host_id'], int(r['oldest_pending_age'] or 0))

@@ -267,6 +267,10 @@ def test_a_report_without_the_queue_has_no_queue_series(w):
     text = _metrics(w)
     assert 'ctl_l2_archiver_report_timestamp_seconds{host_id="%s"} %d' % (DB_HOST, NOON) in text
     assert 'ctl_l2_archive_pending_segments{host_id="%s"}' % DB_HOST not in text
+    # Codex: not silently blind: the missing queue is a series of its own (L2ArchiveQueueUnreported).
+    assert 'ctl_l2_archive_queue_reported{host_id="%s"} 0' % DB_HOST in text
+    w.store.record_archiver(DB_HOST, _report())
+    assert 'ctl_l2_archive_queue_reported{host_id="%s"} 1' % DB_HOST in _metrics(w)
 
 
 def test_never_archived_and_app_hosts_are_ignored(w):
@@ -342,7 +346,25 @@ def test_a_hold_too_close_to_its_end_isnt_used(w):
     _answer(w, op['id'], {'held': True, 'seconds': 900, 'until': w.clock.t + 400})
     w.clock.t += 700
     l2.run_once()
-    assert _expires(run) == 0 and len(_hold_op(w)) == 2
+    assert _expires(run) == 0 and len(_hold_op(w)) == 1            # backups get a gap first
+    w.clock.t += 800                                                # lease end + HOLD_RETRY
+    l2.run_once()
+    assert len(_hold_op(w)) == 2
+
+
+def test_expire_while_the_read_fails_is_recorded(w):
+    """Before db-1's first backup, `info` says "no valid backups": an expire that ran still counts,
+    or it's due (and holds db-1's backups) every pass."""
+    w.clock.t = NOON
+    run = FakeBackrest(info=dict(INFO, status={'code': 2, 'message': 'no valid backups'}))
+    l2 = _l2(w, run)
+    with pytest.raises(L2Error, match='no valid backups'):
+        l2.run_once()
+    assert _row(w)['expired_at'] and _expires(run) == 1
+    w.clock.t += 600
+    with pytest.raises(L2Error):
+        l2.run_once()
+    assert _expires(run) == 1
 
 
 def test_no_db_host_no_expire(w):

@@ -20,6 +20,14 @@ from psycopg import sql
 from . import naming
 
 
+def fsync_dir(path):
+    fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
 @dataclass(frozen=True)
 class DbHostConfig:
     dsn: str                         # superuser, local socket in production
@@ -152,6 +160,9 @@ class PgBackend:
             finally:
                 os.close(out)
             os.replace(tmp, lease)
+            # The rename itself on disk before the grant is acknowledged (and still under the lock):
+            # else a crash can bring back no lease, or the old one, while ctl-1 expires.
+            fsync_dir(lease.parent)
             return {'held': True, 'seconds': seconds, 'until': until}
         finally:
             os.close(fd)                    # the lock: only while writing
